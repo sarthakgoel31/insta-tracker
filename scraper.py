@@ -181,6 +181,28 @@ def fetch_youtube(url: str) -> dict:
 # ── Facebook Fetch ─────────────────────────────────────────
 
 
+def _parse_fb_title_views(title: str) -> int | None:
+    """Facebook embeds real view count in title: '48K views · 551 reactions | ...'"""
+    m = re.match(r"([\d.]+)\s*([KkMm])?\s*views", title)
+    if not m:
+        return None
+    num = float(m.group(1))
+    suffix = (m.group(2) or "").upper()
+    if suffix == "K":
+        num *= 1000
+    elif suffix == "M":
+        num *= 1_000_000
+    return int(num)
+
+
+def _clean_fb_title(title: str, uploader: str) -> str:
+    """Strip 'XXK views · YYY reactions |' prefix and '| Uploader' suffix."""
+    clean = re.sub(r"^[\d.]+[KkMm]?\s*views\s*·\s*[\d.]+[KkMm]?\s*reactions\s*\|\s*", "", title)
+    if uploader and clean.endswith(f" | {uploader}"):
+        clean = clean[: -(len(uploader) + 3)]
+    return clean.strip()[:100]
+
+
 def fetch_facebook(url: str) -> dict:
     try:
         cmd = ["yt-dlp", "--dump-json", "--no-download"]
@@ -195,13 +217,21 @@ def fetch_facebook(url: str) -> dict:
         meta = json.loads(result.stdout)
         upload = meta.get("upload_date")
         posted = f"{upload[:4]}-{upload[4:6]}-{upload[6:8]}" if upload else None
+
+        raw_title = meta.get("title") or ""
+        uploader = meta.get("uploader") or ""
+
+        # Facebook API view_count is wrong — parse from title instead
+        views = _parse_fb_title_views(raw_title) or meta.get("view_count")
+        title = _clean_fb_title(raw_title, uploader) if raw_title else ""
+
         return {
-            "views": meta.get("view_count"),
+            "views": views,
             "likes": meta.get("like_count"),
             "comments": meta.get("comment_count"),
             "posted_date": posted,
-            "title": (meta.get("title") or "")[:100],
-            "account": meta.get("uploader") or "",
+            "title": title,
+            "account": uploader,
         }
     except subprocess.TimeoutExpired:
         return {"error": "Timeout"}
