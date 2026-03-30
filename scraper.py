@@ -380,7 +380,7 @@ def fetch_instagram(url: str) -> dict:
 def fetch_youtube(url: str) -> dict:
     try:
         result = subprocess.run(
-            ["yt-dlp", "--dump-json", "--no-download", url],
+            ["yt-dlp", "--dump-json", "--no-download", "--no-check-certificates", url],
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
@@ -572,7 +572,7 @@ def _fetch_fb_ytdlp(url: str) -> dict:
     """Fallback: yt-dlp for Facebook."""
     try:
         result = subprocess.run(
-            ["yt-dlp", "--dump-json", "--no-download", url],
+            ["yt-dlp", "--dump-json", "--no-download", "--no-check-certificates", url],
             capture_output=True, text=True, timeout=30,
         )
         if result.returncode != 0:
