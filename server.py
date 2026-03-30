@@ -30,18 +30,39 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.on_event("startup")
 def startup():
     init_db()
-    # Load IG session from env var (for cloud deploys where login from server IP is blocked)
     from pathlib import Path
     data_dir = Path(__file__).parent / "data"
     data_dir.mkdir(exist_ok=True)
-    ig_session_b64 = os.environ.get("IG_SESSION")
+
     ig_user = os.environ.get("IG_USERNAME")
+
+    # Load IG cookies from env var (Playwright format, preferred)
+    ig_cookies_b64 = os.environ.get("IG_COOKIES_B64")
+    if ig_cookies_b64 and ig_user:
+        cookies_file = data_dir / "ig_cookies.json"
+        username_file = data_dir / "ig_username.txt"
+        if not cookies_file.exists():
+            cookies_file.write_bytes(base64.b64decode(ig_cookies_b64))
+            username_file.write_text(ig_user)
+
+    # Legacy: load instaloader session + auto-export cookies
+    ig_session_b64 = os.environ.get("IG_SESSION")
     if ig_session_b64 and ig_user:
         session_file = data_dir / "ig_session"
         username_file = data_dir / "ig_username.txt"
         if not session_file.exists():
             session_file.write_bytes(base64.b64decode(ig_session_b64))
             username_file.write_text(ig_user)
+        # Export instaloader cookies to JSON for Playwright/GraphQL
+        cookies_file = data_dir / "ig_cookies.json"
+        if not cookies_file.exists():
+            try:
+                from scraper import _get_ig_loader, _export_cookies_to_json
+                L = _get_ig_loader()
+                if L.context.is_logged_in:
+                    _export_cookies_to_json(L)
+            except Exception:
+                pass
 
 
 @app.get("/")
