@@ -1,6 +1,8 @@
 """FastAPI server for Social Tracker."""
 
+import base64
 import json
+import os
 import threading
 import time
 from datetime import datetime
@@ -28,6 +30,18 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 @app.on_event("startup")
 def startup():
     init_db()
+    # Load IG session from env var (for cloud deploys where login from server IP is blocked)
+    from pathlib import Path
+    data_dir = Path(__file__).parent / "data"
+    data_dir.mkdir(exist_ok=True)
+    ig_session_b64 = os.environ.get("IG_SESSION")
+    ig_user = os.environ.get("IG_USERNAME")
+    if ig_session_b64 and ig_user:
+        session_file = data_dir / "ig_session"
+        username_file = data_dir / "ig_username.txt"
+        if not session_file.exists():
+            session_file.write_bytes(base64.b64decode(ig_session_b64))
+            username_file.write_text(ig_user)
 
 
 @app.get("/")
@@ -397,7 +411,6 @@ def distribution_analytics():
 
 
 if __name__ == "__main__":
-    import os
     import uvicorn
     port = int(os.environ.get("PORT", 8501))
     uvicorn.run(app, host="0.0.0.0", port=port)
