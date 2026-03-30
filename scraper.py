@@ -404,52 +404,118 @@ def fetch_youtube(url: str) -> dict:
 # ── Facebook: Playwright ──────────────────────────────────
 
 
+FB_COOKIES_FILE = DATA_DIR / "fb_cookies.json"
+
+
+def _get_fb_cookies() -> list[dict]:
+    if FB_COOKIES_FILE.exists():
+        try:
+            return json.loads(FB_COOKIES_FILE.read_text())
+        except Exception:
+            pass
+    env = os.environ.get("FB_COOKIES_B64")
+    if env:
+        import base64
+        try:
+            return json.loads(base64.b64decode(env))
+        except Exception:
+            pass
+    return []
+
+
+def _ocr_views_from_screenshot(img_bytes: bytes) -> int | None:
+    """OCR a screenshot to find 'XXXK Views' pattern."""
+    import pytesseract
+    from PIL import Image
+    import io
+
+    img = Image.open(io.BytesIO(img_bytes))
+    text = pytesseract.image_to_string(img)
+    # Look for patterns like "288K Views", "1.2M Views"
+    m = re.search(r"([\d,.]+[KkMm]?)\s*[Vv]iews", text)
+    if m:
+        return _parse_human_count(m.group(1))
+    return None
+
+
 async def _fetch_fb_playwright(url: str) -> dict:
-    """Open FB reel, extract view count from og:title meta tag."""
+    """Open FB reel on mobile with cookies, screenshot + OCR for view count."""
     from playwright.async_api import async_playwright
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
-        page = await (await browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        )).new_page()
+        context = await browser.new_context(
+            viewport={"width": 390, "height": 844},
+            user_agent="Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1",
+            is_mobile=True,
+        )
 
+        cookies = _get_fb_cookies()
+        if cookies:
+            await context.add_cookies(cookies)
+
+        page = await context.new_page()
         try:
-            await page.goto(url, wait_until="networkidle", timeout=30000)
-            await page.wait_for_timeout(2000)
+            await page.goto(url.replace("www.facebook.com", "m.facebook.com"),
+                            wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(3000)
+            # Dismiss any Facebook modals
+            for dismiss_text in ["Stay on professional mode", "Not now", "Close", "OK"]:
+                try:
+                    btn = page.get_by_text(dismiss_text, exact=False).first
+                    if await btn.is_visible(timeout=1000):
+                        await btn.click()
+                        await page.wait_for_timeout(1000)
+                except Exception:
+                    pass
+            await page.wait_for_timeout(3000)
         except Exception:
             pass
 
         result = {"views": None, "likes": None, "comments": 0,
                   "posted_date": None, "title": "", "account": ""}
 
+        # Screenshot + OCR for view count
         try:
-            og = await page.get_attribute('meta[property="og:title"]', "content")
-            if og:
-                result["views"] = _parse_fb_og_views(og)
-                # Clean title: strip view/reaction prefix (English + Hindi)
-                clean = re.sub(r"^[\d.,]+\s*[KkMmBb]?\s*(?:views|Views)\s*·\s*[\d.,]+\s*[KkMmBb]?\s*(?:reactions?|Reactions?)\s*\|\s*", "", og)
-                clean = re.sub(r"^[\d.]+\s*(?:लाख|हज़ार|करोड़)\s*(?:व्यूज़?)\s*·\s*[\d.]+\s*(?:लाख|हज़ार|करोड़)?\s*(?:रिएक्शन)\s*\|\s*", "", clean)
-                parts = clean.rsplit(" | ", 1)
-                if len(parts) == 2:
-                    result["account"] = parts[1].strip()
-                    clean = parts[0]
-                result["title"] = clean.strip()[:100]
-
-            if not result["account"]:
-                for selector in ['a[role="link"] strong', 'h2 a span']:
-                    el = await page.query_selector(selector)
-                    if el:
-                        result["account"] = (await el.inner_text()).strip()
-                        break
+            screenshot = await page.screenshot()
+            result["views"] = _ocr_views_from_screenshot(screenshot)
         except Exception:
             pass
+
+        # Get metadata from page text
+        try:
+            text = await page.inner_text("body")
+            lines = [l.strip() for l in text.split("\n") if l.strip()]
+
+            # Account: line before "•" + "Follow"
+            for i, line in enumerate(lines):
+                if line == "•" and i + 1 < len(lines) and ("Follow" in lines[i + 1] or "फ़ॉलो" in lines[i + 1]):
+                    if i > 0:
+                        name = re.sub(r"[^\w\s.'-]", "", lines[i - 1]).strip()
+                        if name and len(name) > 1:
+                            result["account"] = name
+                    # Caption is after "Follow" line
+                    if i + 2 < len(lines):
+                        cap = lines[i + 2]
+                        if cap and len(cap) > 5 and not any(c in cap for c in ["󱘺", "ओरिजनल"]):
+                            result["title"] = cap.replace("... और", "").replace("... and", "").strip()[:100]
+                    break
+        except Exception:
+            pass
+
+        # Fallback: og:title for views if OCR failed
+        if result["views"] is None:
+            try:
+                og = await page.get_attribute('meta[property="og:title"]', "content")
+                if og:
+                    result["views"] = _parse_fb_og_views(og)
+            except Exception:
+                pass
 
         await browser.close()
         if result["views"] is not None:
             return result
-        return {"error": "Could not extract view count from Facebook page."}
+        return {"error": "Could not extract FB view count. Ensure FB cookies are set."}
 
 
 def _fetch_fb_ytdlp(url: str) -> dict:

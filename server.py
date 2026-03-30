@@ -103,6 +103,10 @@ class ReelCreate(BaseModel):
     title: str = ""
 
 
+class BulkAdd(BaseModel):
+    urls: list[str]
+
+
 class ReelUpdate(BaseModel):
     title: str | None = None
     posted_date: str | None = None
@@ -210,6 +214,28 @@ def add_reel(reel: ReelCreate):
         raise HTTPException(400, "URL already exists")
     conn.close()
     return {"ok": True}
+
+
+@app.post("/api/reels/bulk")
+def add_reels_bulk(data: BulkAdd):
+    conn = get_db()
+    added, skipped = 0, 0
+    for url in data.urls:
+        url = url.strip()
+        if not url:
+            continue
+        platform = detect_platform(url)
+        if platform == "unknown":
+            skipped += 1
+            continue
+        try:
+            conn.execute("INSERT INTO reels (url, platform) VALUES (?, ?)", (url, platform))
+            added += 1
+        except Exception:
+            skipped += 1
+    conn.commit()
+    conn.close()
+    return {"added": added, "skipped": skipped}
 
 
 @app.put("/api/reels/{reel_id}")

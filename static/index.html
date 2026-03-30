@@ -118,6 +118,7 @@
   <h1>Social Tracker</h1>
   <div class="header-actions">
     <button class="btn btn-outline" onclick="openSettings()">Settings</button>
+    <button class="btn btn-outline" onclick="openBulkAdd()">Bulk Add</button>
     <button class="btn btn-outline" onclick="addColumnPrompt()">+ Column</button>
     <button class="btn btn-primary" id="refreshBtn" onclick="refreshViews()">Refresh Views</button>
   </div>
@@ -179,6 +180,23 @@
         </div>
         <p class="status-info" style="margin-top:6px">Private videos may need a cookies.txt file in the data/ folder.</p>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bulk Add Modal -->
+<div class="modal-overlay" id="bulkModal" style="display:none" onclick="if(event.target===this)closeBulkAdd()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Bulk Add URLs</h3>
+      <button class="modal-close" onclick="closeBulkAdd()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <p class="status-info" style="margin-bottom:12px">Paste one URL per line (Instagram, YouTube, Facebook)</p>
+      <textarea id="bulkUrls" rows="10" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:monospace;resize:vertical;outline:none" placeholder="https://www.instagram.com/reel/ABC123/
+https://www.youtube.com/shorts/XYZ789
+https://www.facebook.com/reel/123456"></textarea>
+      <button class="btn btn-primary" style="margin-top:12px;width:100%" onclick="submitBulkAdd()">Add All</button>
     </div>
   </div>
 </div>
@@ -479,6 +497,23 @@ async function deleteColumn(id) {
 }
 
 // ── Settings Modal ──
+
+function openBulkAdd() { document.getElementById('bulkModal').style.display = 'flex'; }
+function closeBulkAdd() { document.getElementById('bulkModal').style.display = 'none'; }
+
+async function submitBulkAdd() {
+  const text = document.getElementById('bulkUrls').value.trim();
+  if (!text) return;
+  const urls = text.split('\n').map(u => u.trim()).filter(u => u);
+  if (!urls.length) return;
+  try {
+    const res = await api('/api/reels/bulk', { method: 'POST', body: JSON.stringify({ urls }) });
+    toast(`Added ${res.added}, skipped ${res.skipped}`);
+    document.getElementById('bulkUrls').value = '';
+    closeBulkAdd();
+    await loadAll();
+  } catch (e) { toast('Error: ' + e.message); }
+}
 
 function openSettings() {
   document.getElementById('settingsModal').style.display = 'flex';
