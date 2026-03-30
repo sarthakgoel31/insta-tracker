@@ -1,4 +1,4 @@
-"""SQLite database for Social Tracker."""
+"""SQLite database for MBB Social Branding Tracker."""
 
 import sqlite3
 from pathlib import Path
