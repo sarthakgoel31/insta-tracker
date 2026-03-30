@@ -3,6 +3,7 @@ FROM python:3.13-slim
 # Install system deps: tesseract for OCR, chromium deps for Playwright
 RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
