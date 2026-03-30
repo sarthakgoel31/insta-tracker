@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Social Tracker</title>
+<style>
+  :root {
+    --bg: #f3f4f6; --card: #fff; --border: #e5e7eb;
+    --text: #1f2937; --muted: #6b7280; --accent: #6366f1;
+    --green: #10b981; --red: #ef4444; --bar: #e0e7ff;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); padding: 24px; max-width: 1200px; margin: 0 auto; }
+
+  .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
+  .header h1 { font-size: 24px; font-weight: 700; }
+  .header-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { padding: 8px 16px; border: none; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all .15s; }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-primary:hover { background: #4f46e5; }
+  .btn-outline { background: var(--card); border: 1px solid var(--border); color: var(--text); }
+  .btn-outline:hover { background: var(--bg); }
+  .btn-danger { background: var(--red); color: #fff; font-size: 12px; padding: 4px 10px; }
+  .btn-danger:hover { opacity: .85; }
+  .btn:disabled { opacity: .5; cursor: not-allowed; }
+  .btn-sm { padding: 6px 12px; font-size: 13px; }
+
+  .card { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 20px; margin-bottom: 20px; }
+  .card h2 { font-weight: 600; margin-bottom: 16px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; font-size: 12px; }
+
+  .add-form { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }
+  .add-form input { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; outline: none; }
+  .add-form input:focus { border-color: var(--accent); }
+  .add-form input[name="url"] { flex: 2; min-width: 240px; }
+  .add-form input[name="title"] { flex: 1; min-width: 120px; }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th { text-align: left; padding: 10px 12px; font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; border-bottom: 2px solid var(--border); white-space: nowrap; }
+  td { padding: 10px 12px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:hover td { background: #f9fafb; }
+  .url-cell { max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .url-cell a { color: var(--accent); text-decoration: none; }
+  .url-cell a:hover { text-decoration: underline; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; }
+  .growth-pos { color: var(--green); font-weight: 600; }
+  .growth-neg { color: var(--red); font-weight: 600; }
+  .growth-zero { color: var(--muted); }
+
+  .editable { cursor: pointer; border-bottom: 1px dashed var(--border); padding-bottom: 1px; }
+  .editable:hover { border-color: var(--accent); }
+  .edit-input { padding: 4px 8px; border: 1px solid var(--accent); border-radius: 4px; font-size: 13px; width: 100%; outline: none; }
+
+  .analytics { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 768px) { .analytics { grid-template-columns: 1fr; } }
+
+  .bar-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+  .bar-label { width: 90px; font-size: 13px; color: var(--muted); text-align: right; flex-shrink: 0; }
+  .bar-track { flex: 1; height: 28px; background: var(--bar); border-radius: 6px; position: relative; overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--accent); border-radius: 6px; transition: width .4s ease; min-width: 2px; }
+  .bar-value { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); font-size: 12px; font-weight: 600; color: var(--text); }
+
+  .loading { position: fixed; inset: 0; background: rgba(0,0,0,.3); display: flex; align-items: center; justify-content: center; z-index: 100; }
+  .loading-box { background: var(--card); padding: 32px; border-radius: 16px; text-align: center; }
+  .spinner { width: 36px; height: 36px; border: 3px solid var(--border); border-top-color: var(--accent); border-radius: 50%; animation: spin .8s linear infinite; margin: 0 auto 12px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .toast { position: fixed; bottom: 24px; right: 24px; background: var(--text); color: #fff; padding: 12px 20px; border-radius: 8px; font-size: 14px; z-index: 200; animation: fadeIn .2s; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } }
+
+  .empty { text-align: center; padding: 40px; color: var(--muted); }
+
+  .col-header { position: relative; }
+  .col-delete { display: none; position: absolute; top: -4px; right: -4px; background: var(--red); color: #fff; border: none; border-radius: 50%; width: 16px; height: 16px; font-size: 10px; cursor: pointer; line-height: 16px; text-align: center; }
+  .col-header:hover .col-delete { display: block; }
+
+  /* Platform badges */
+  .badge { display: inline-block; padding: 2px 7px; border-radius: 4px; font-size: 11px; font-weight: 700; color: #fff; letter-spacing: .3px; }
+  .badge-instagram { background: #E1306C; }
+  .badge-youtube { background: #FF0000; }
+  .badge-facebook { background: #1877F2; }
+  .badge-unknown { background: var(--muted); }
+
+  /* Settings modal */
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,.4); z-index: 150; display: flex; align-items: center; justify-content: center; animation: fadeIn .15s; }
+  .modal { background: var(--card); border-radius: 16px; width: 460px; max-width: 92vw; max-height: 85vh; overflow-y: auto; }
+  .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 20px 24px; border-bottom: 1px solid var(--border); }
+  .modal-header h3 { font-size: 18px; font-weight: 700; }
+  .modal-close { background: none; border: none; font-size: 22px; cursor: pointer; color: var(--muted); padding: 4px; }
+  .modal-close:hover { color: var(--text); }
+  .modal-body { padding: 24px; }
+  .setting-section { margin-bottom: 28px; }
+  .setting-section:last-child { margin-bottom: 0; }
+  .setting-section h4 { font-size: 14px; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+  .setting-row { display: flex; flex-direction: column; gap: 8px; }
+  .setting-row input { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; outline: none; }
+  .setting-row input:focus { border-color: var(--accent); }
+  .status-line { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+  .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+  .status-ok { background: var(--green); }
+  .status-off { background: var(--muted); }
+  .status-info { color: var(--muted); font-size: 13px; }
+
+  /* Banner */
+  .banner { padding: 12px 20px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
+  .banner-warn { background: #fef3c7; border: 1px solid #f59e0b; color: #92400e; }
+  .banner a { color: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div id="loginBanner" class="banner banner-warn" style="display:none">
+  Instagram not connected. <a onclick="openSettings()">Open Settings</a> to log in.
+</div>
+
+<div class="header">
+  <h1>Social Tracker</h1>
+  <div class="header-actions">
+    <button class="btn btn-outline" onclick="openSettings()">Settings</button>
+    <button class="btn btn-outline" onclick="addColumnPrompt()">+ Column</button>
+    <button class="btn btn-primary" id="refreshBtn" onclick="refreshViews()">Refresh Views</button>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Content</h2>
+  <form class="add-form" onsubmit="addReel(event)">
+    <input name="url" placeholder="Paste URL (Instagram, YouTube, Facebook)" required>
+    <input name="title" placeholder="Title (optional)">
+    <button class="btn btn-primary" type="submit">Add</button>
+  </form>
+  <div class="table-wrap">
+    <table>
+      <thead id="tableHead"></thead>
+      <tbody id="tableBody"></tbody>
+    </table>
+  </div>
+  <div id="emptyState" class="empty" style="display:none">No content yet. Paste a URL above to start tracking.</div>
+</div>
+
+<div class="analytics">
+  <div class="card">
+    <h2>Monthly Views</h2>
+    <div id="monthlyChart"></div>
+    <div id="monthlyEmpty" class="empty" style="display:none">No data yet. Refresh views first.</div>
+  </div>
+  <div class="card">
+    <h2>Age Distribution</h2>
+    <div id="distChart"></div>
+    <div id="distEmpty" class="empty" style="display:none">Need posted dates to calculate distribution.</div>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay" id="settingsModal" style="display:none" onclick="if(event.target===this)closeSettings()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3>Settings</h3>
+      <button class="modal-close" onclick="closeSettings()">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div class="setting-section">
+        <h4><span class="badge badge-instagram">IG</span> Instagram</h4>
+        <div id="igSection"></div>
+      </div>
+      <div class="setting-section">
+        <h4><span class="badge badge-youtube">YT</span> YouTube</h4>
+        <div class="status-line">
+          <span class="status-dot status-ok"></span>
+          Ready — no login required
+        </div>
+      </div>
+      <div class="setting-section">
+        <h4><span class="badge badge-facebook">FB</span> Facebook</h4>
+        <div class="status-line">
+          <span class="status-dot status-ok"></span>
+          Ready for public videos
+        </div>
+        <p class="status-info" style="margin-top:6px">Private videos may need a cookies.txt file in the data/ folder.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Loading overlay -->
+<div class="loading" id="loadingOverlay" style="display:none">
+  <div class="loading-box">
+    <div class="spinner"></div>
+    <div id="loadingText">Fetching views...</div>
+    <div id="progressBar" style="margin-top:12px;width:240px;height:6px;background:#e5e7eb;border-radius:3px;overflow:hidden;display:none">
+      <div id="progressFill" style="height:100%;background:#6366f1;border-radius:3px;transition:width .3s;width:0%"></div>
+    </div>
+    <div id="progressDetail" style="margin-top:6px;font-size:12px;color:#6b7280"></div>
+  </div>
+</div>
+
+<script>
+let reels = [];
+let columns = [];
+let monthlyData = [];
+let distData = [];
+let igState = 'disconnected'; // 'disconnected' | '2fa' | 'connected'
+let igUser = '';
+
+// ── API ──
+
+async function api(path, opts = {}) {
+  const res = await fetch(path, {
+    headers: { 'Content-Type': 'application/json' },
+    ...opts,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.detail || res.statusText);
+  }
+  return res.json();
+}
+
+// ── Load ──
+
+async function loadAll() {
+  try {
+    const [r, c, m, d, s] = await Promise.all([
+      api('/api/reels'),
+      api('/api/columns'),
+      api('/api/analytics/monthly'),
+      api('/api/analytics/distribution'),
+      api('/api/status'),
+    ]);
+    reels = r.reels;
+    columns = c.columns;
+    monthlyData = m.months;
+    distData = d.distribution;
+
+    if (s.instagram.logged_in) {
+      igState = 'connected';
+      igUser = s.instagram.username || '';
+    } else {
+      igState = 'disconnected';
+      igUser = '';
+    }
+    const hasIgReels = reels.some(r => r.platform === 'instagram');
+    document.getElementById('loginBanner').style.display =
+      (!s.instagram.logged_in && hasIgReels) ? 'flex' : 'none';
+
+    render();
+    renderIgSettings();
+  } catch (e) {
+    toast('Failed to load: ' + e.message);
+  }
+}
+
+// ── Render ──
+
+function render() {
+  renderTable();
+  renderMonthly();
+  renderDist();
+}
+
+function platformBadge(p) {
+  const labels = { instagram: 'IG', youtube: 'YT', facebook: 'FB' };
+  return `<span class="badge badge-${p || 'unknown'}">${labels[p] || '?'}</span>`;
+}
+
+function renderTable() {
+  const head = document.getElementById('tableHead');
+  const body = document.getElementById('tableBody');
+  const empty = document.getElementById('emptyState');
+
+  let th = '<tr><th></th><th>URL</th><th>Account</th><th>Title</th><th>Posted</th>';
+  columns.forEach(c => {
+    th += `<th class="col-header">${esc(c.name)}<button class="col-delete" onclick="deleteColumn(${c.id})" title="Remove column">&times;</button></th>`;
+  });
+  th += '<th class="num">Views</th><th class="num">Comments</th><th class="num">Growth</th><th></th></tr>';
+  head.innerHTML = th;
+
+  if (!reels.length) {
+    body.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  body.innerHTML = reels.map(r => {
+    const g = r.growth;
+    let growthHtml = '<span class="growth-zero">--</span>';
+    if (g !== null && g !== undefined) {
+      if (g > 0) growthHtml = `<span class="growth-pos">+${fmt(g)}</span>`;
+      else if (g < 0) growthHtml = `<span class="growth-neg">${fmt(g)}</span>`;
+      else growthHtml = '<span class="growth-zero">0</span>';
+    }
+
+    let customCells = columns.map(c => {
+      const val = (r.custom_fields || {})[c.name] || '';
+      return `<td><span class="editable" onclick="editCustom(${r.id}, '${esc(c.name)}', this)">${esc(val) || '--'}</span></td>`;
+    }).join('');
+
+    // Shorten URL for display
+    let short = r.url
+      .replace(/https?:\/\/(www\.)?(instagram\.com|youtube\.com|youtu\.be|facebook\.com|fb\.watch)\//, '')
+      .replace(/\/$/, '');
+    if (short.length > 30) short = short.slice(0, 28) + '...';
+
+    return `<tr>
+      <td>${platformBadge(r.platform)}</td>
+      <td class="url-cell"><a href="${esc(r.url)}" target="_blank">${esc(short)}</a></td>
+      <td>${r.account ? esc(r.account) : '--'}</td>
+      <td><span class="editable" onclick="editField(${r.id}, 'title', this)">${esc(r.title) || '--'}</span></td>
+      <td>${r.posted_date || '--'}</td>
+      ${customCells}
+      <td class="num">${r.views !== null ? fmt(r.views) : '--'}</td>
+      <td class="num">${r.comments !== null ? fmt(r.comments) : '--'}</td>
+      <td class="num">${growthHtml}</td>
+      <td><button class="btn btn-danger" onclick="deleteReel(${r.id})">Delete</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderMonthly() {
+  const el = document.getElementById('monthlyChart');
+  const empty = document.getElementById('monthlyEmpty');
+  if (!monthlyData.length) { el.innerHTML = ''; empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  const max = Math.max(...monthlyData.map(m => m.views), 1);
+  el.innerHTML = monthlyData.map(m => {
+    const pct = (m.views / max * 100).toFixed(1);
+    return `<div class="bar-row">
+      <div class="bar-label">${formatMonth(m.month)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div><span class="bar-value">${fmt(m.views)}</span></div>
+    </div>`;
+  }).join('');
+}
+
+function renderDist() {
+  const el = document.getElementById('distChart');
+  const empty = document.getElementById('distEmpty');
+  if (!distData.length) { el.innerHTML = ''; empty.style.display = 'block'; return; }
+  empty.style.display = 'none';
+  const max = Math.max(...distData.map(d => d.views), 1);
+  el.innerHTML = distData.map(d => {
+    const pct = (d.views / max * 100).toFixed(1);
+    return `<div class="bar-row">
+      <div class="bar-label">${esc(d.label)}</div>
+      <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div><span class="bar-value">${fmt(d.views)} <small>(${d.reel_count} reels)</small></span></div>
+    </div>`;
+  }).join('');
+}
+
+// ── Actions ──
+
+async function addReel(e) {
+  e.preventDefault();
+  const form = e.target;
+  const url = form.url.value.trim();
+  const title = form.title.value.trim();
+  try {
+    await api('/api/reels', { method: 'POST', body: JSON.stringify({ url, title }) });
+    form.reset();
+    await loadAll();
+    toast('Added');
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+async function deleteReel(id) {
+  if (!confirm('Delete this and all its history?')) return;
+  try {
+    await api(`/api/reels/${id}`, { method: 'DELETE' });
+    await loadAll();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+async function refreshViews() {
+  const btn = document.getElementById('refreshBtn');
+  const overlay = document.getElementById('loadingOverlay');
+  const text = document.getElementById('loadingText');
+  const bar = document.getElementById('progressBar');
+  const fill = document.getElementById('progressFill');
+  const detail = document.getElementById('progressDetail');
+
+  btn.disabled = true;
+  overlay.style.display = 'flex';
+  bar.style.display = 'block';
+  fill.style.width = '0%';
+  text.textContent = `Starting refresh for ${reels.length} item${reels.length !== 1 ? 's' : ''}...`;
+  detail.textContent = '';
+
+  try {
+    const res = await api('/api/refresh', { method: 'POST' });
+    const total = res.total;
+    const est = res.est_seconds;
+    text.textContent = `Fetching views (0/${total})...`;
+    detail.textContent = `~${Math.ceil(est / 60)} min estimated`;
+
+    await new Promise((resolve) => {
+      const poll = setInterval(async () => {
+        try {
+          const p = await api('/api/refresh/progress');
+          const pct = total > 0 ? (p.completed / total * 100).toFixed(0) : 0;
+          fill.style.width = pct + '%';
+          text.textContent = `Fetching views (${p.completed}/${total})...`;
+          detail.textContent = p.errors > 0 ? `${p.errors} error${p.errors > 1 ? 's' : ''}` : '';
+
+          if (!p.running) {
+            clearInterval(poll);
+            if (p.errors > 0) toast(`Done. ${p.errors} error(s) out of ${total}.`);
+            else toast('All views updated!');
+            resolve();
+          }
+        } catch { /* ignore poll errors */ }
+      }, 2000);
+    });
+
+    await loadAll();
+  } catch (e) { toast('Refresh failed: ' + e.message); }
+
+  overlay.style.display = 'none';
+  bar.style.display = 'none';
+  btn.disabled = false;
+}
+
+// ── Inline editing ──
+
+function editField(id, field, el) {
+  const current = el.textContent === '--' ? '' : el.textContent;
+  const input = document.createElement('input');
+  input.className = 'edit-input';
+  input.value = current;
+  el.replaceWith(input);
+  input.focus();
+  async function save() {
+    const val = input.value.trim();
+    try {
+      await api(`/api/reels/${id}`, { method: 'PUT', body: JSON.stringify({ [field]: val }) });
+      await loadAll();
+    } catch (e) { toast('Error: ' + e.message); await loadAll(); }
+  }
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') loadAll(); });
+}
+
+function editCustom(id, colName, el) {
+  const current = el.textContent === '--' ? '' : el.textContent;
+  const input = document.createElement('input');
+  input.className = 'edit-input';
+  input.value = current;
+  el.replaceWith(input);
+  input.focus();
+  async function save() {
+    try {
+      await api(`/api/reels/${id}`, { method: 'PUT', body: JSON.stringify({ custom_fields: { [colName]: input.value.trim() } }) });
+      await loadAll();
+    } catch (e) { toast('Error: ' + e.message); await loadAll(); }
+  }
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') loadAll(); });
+}
+
+// ── Columns ──
+
+async function addColumnPrompt() {
+  const name = prompt('Column name:');
+  if (!name || !name.trim()) return;
+  try {
+    await api('/api/columns', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
+    await loadAll();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+async function deleteColumn(id) {
+  if (!confirm('Remove this column?')) return;
+  try {
+    await api(`/api/columns/${id}`, { method: 'DELETE' });
+    await loadAll();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+// ── Settings Modal ──
+
+function openSettings() {
+  document.getElementById('settingsModal').style.display = 'flex';
+  renderIgSettings();
+}
+function closeSettings() {
+  document.getElementById('settingsModal').style.display = 'none';
+}
+
+function renderIgSettings() {
+  const el = document.getElementById('igSection');
+  if (igState === 'connected') {
+    el.innerHTML = `
+      <div class="status-line">
+        <span class="status-dot status-ok"></span>
+        Connected as <strong>@${esc(igUser)}</strong>
+        <button class="btn btn-outline btn-sm" onclick="igLogout()" style="margin-left:auto">Disconnect</button>
+      </div>`;
+  } else if (igState === '2fa') {
+    el.innerHTML = `
+      <p class="status-info" style="margin-bottom:8px">Enter the 2FA code from your authenticator app:</p>
+      <div style="display:flex;gap:8px">
+        <input id="ig2faCode" placeholder="6-digit code" style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;outline:none">
+        <button class="btn btn-primary btn-sm" onclick="submitIg2fa()">Verify</button>
+      </div>`;
+    setTimeout(() => document.getElementById('ig2faCode')?.focus(), 100);
+  } else {
+    el.innerHTML = `
+      <div class="setting-row">
+        <input id="igUsername" placeholder="Instagram username">
+        <input id="igPassword" placeholder="Password" type="password">
+        <button class="btn btn-primary btn-sm" id="igLoginBtn" onclick="submitIgLogin()">Connect</button>
+      </div>`;
+  }
+}
+
+async function submitIgLogin() {
+  const user = document.getElementById('igUsername').value.trim();
+  const pass = document.getElementById('igPassword').value;
+  if (!user || !pass) return toast('Enter username and password');
+  const btn = document.getElementById('igLoginBtn');
+  btn.disabled = true;
+  btn.textContent = 'Connecting...';
+  try {
+    const res = await api('/api/auth/instagram', {
+      method: 'POST', body: JSON.stringify({ username: user, password: pass })
+    });
+    if (res.success) {
+      igState = 'connected';
+      igUser = res.username;
+      toast('Instagram connected!');
+      renderIgSettings();
+      loadAll();
+    } else if (res.needs_2fa) {
+      igState = '2fa';
+      renderIgSettings();
+    } else if (res.error) {
+      toast(res.error);
+      btn.disabled = false;
+      btn.textContent = 'Connect';
+    }
+  } catch (e) {
+    toast('Login failed: ' + e.message);
+    btn.disabled = false;
+    btn.textContent = 'Connect';
+  }
+}
+
+async function submitIg2fa() {
+  const code = document.getElementById('ig2faCode').value.trim();
+  if (!code) return;
+  try {
+    const res = await api('/api/auth/instagram/2fa', {
+      method: 'POST', body: JSON.stringify({ code })
+    });
+    if (res.success) {
+      igState = 'connected';
+      igUser = res.username;
+      toast('Instagram connected!');
+      renderIgSettings();
+      loadAll();
+    } else {
+      toast(res.error || '2FA failed');
+      igState = 'disconnected';
+      renderIgSettings();
+    }
+  } catch (e) {
+    toast('2FA failed: ' + e.message);
+    igState = 'disconnected';
+    renderIgSettings();
+  }
+}
+
+async function igLogout() {
+  await api('/api/auth/instagram/logout', { method: 'POST' });
+  igState = 'disconnected';
+  igUser = '';
+  renderIgSettings();
+  loadAll();
+}
+
+// ── Helpers ──
+
+function fmt(n) { return n != null ? n.toLocaleString() : '--'; }
+function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+function formatMonth(ym) { const [y, m] = ym.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m - 1] + ' ' + y; }
+
+function toast(msg) {
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = msg;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 3000);
+}
+
+// ── Init ──
+loadAll();
+</script>
+</body>
+</html>
