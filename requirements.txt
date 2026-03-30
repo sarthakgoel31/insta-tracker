@@ -2,3 +2,5 @@ fastapi
 uvicorn
 instaloader
 yt-dlp
+playwright
+httpx
