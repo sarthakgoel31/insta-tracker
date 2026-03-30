@@ -40,6 +40,15 @@ def init_db():
             name TEXT UNIQUE NOT NULL,
             created_at TEXT DEFAULT (datetime('now'))
         );
+        CREATE TABLE IF NOT EXISTS monthly_views (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reel_id INTEGER NOT NULL REFERENCES reels(id) ON DELETE CASCADE,
+            month TEXT NOT NULL,
+            cumulative_views INTEGER,
+            is_manual INTEGER DEFAULT 0,
+            updated_at TEXT DEFAULT (datetime('now')),
+            UNIQUE(reel_id, month)
+        );
     """)
     # Migration: add platform column if DB existed before
     cols = [r[1] for r in conn.execute("PRAGMA table_info(reels)").fetchall()]
