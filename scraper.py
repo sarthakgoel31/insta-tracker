@@ -425,22 +425,40 @@ def _get_fb_cookies() -> list[dict]:
 
 def _ocr_views_from_screenshot(img_bytes: bytes) -> int | None:
     """OCR a screenshot to find 'XXXK Views' pattern."""
-    import pytesseract
-    from PIL import Image
-    import io
+    try:
+        import pytesseract
+        from PIL import Image
+        import io
 
-    img = Image.open(io.BytesIO(img_bytes))
-    text = pytesseract.image_to_string(img)
-    # Look for patterns like "288K Views", "1.2M Views"
-    m = re.search(r"([\d,.]+[KkMm]?)\s*[Vv]iews", text)
-    if m:
-        return _parse_human_count(m.group(1))
+        img = Image.open(io.BytesIO(img_bytes))
+        text = pytesseract.image_to_string(img)
+        m = re.search(r"([\d,.]+[KkMm]?)\s*[Vv]iews", text)
+        if m:
+            return _parse_human_count(m.group(1))
+    except Exception:
+        pass  # tesseract not installed
     return None
 
 
 async def _fetch_fb_playwright(url: str) -> dict:
-    """Open FB reel on mobile with cookies, screenshot + OCR for view count."""
+    """Open FB reel on mobile with cookies, try multiple strategies for view count."""
     from playwright.async_api import async_playwright
+
+    api_views = [None]
+
+    async def on_response(response):
+        """Intercept FB API responses for play_count/view_count."""
+        try:
+            if response.status != 200:
+                return
+            if any(p in response.url for p in ["/api/graphql", "/ajax/", "graphql"]):
+                body = await response.text()
+                for key in ["play_count", "video_play_count", "view_count"]:
+                    m = re.search(rf'"{key}":\s*(\d+)', body)
+                    if m and api_views[0] is None:
+                        api_views[0] = int(m.group(1))
+        except Exception:
+            pass
 
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -455,11 +473,12 @@ async def _fetch_fb_playwright(url: str) -> dict:
             await context.add_cookies(cookies)
 
         page = await context.new_page()
+        page.on("response", on_response)
+
         try:
             await page.goto(url.replace("www.facebook.com", "m.facebook.com"),
                             wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(3000)
-            # Dismiss any Facebook modals
             for dismiss_text in ["Stay on professional mode", "Not now", "Close", "OK"]:
                 try:
                     btn = page.get_by_text(dismiss_text, exact=False).first
@@ -475,12 +494,17 @@ async def _fetch_fb_playwright(url: str) -> dict:
         result = {"views": None, "likes": None, "comments": 0,
                   "posted_date": None, "title": "", "account": ""}
 
-        # Screenshot + OCR for view count
-        try:
-            screenshot = await page.screenshot()
-            result["views"] = _ocr_views_from_screenshot(screenshot)
-        except Exception:
-            pass
+        # Strategy 1: API interception
+        if api_views[0]:
+            result["views"] = api_views[0]
+
+        # Strategy 2: Screenshot + OCR
+        if result["views"] is None:
+            try:
+                screenshot = await page.screenshot()
+                result["views"] = _ocr_views_from_screenshot(screenshot)
+            except Exception:
+                pass
 
         # Get metadata from page text
         try:
