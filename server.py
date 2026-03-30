@@ -95,6 +95,13 @@ def root():
     return FileResponse("static/index.html")
 
 
+@app.get("/api/test-scrape")
+def test_scrape(url: str):
+    """Debug endpoint: test scraping a single URL and return raw result."""
+    from scraper import fetch_reel_data
+    return fetch_reel_data(url)
+
+
 @app.get("/api/debug")
 def debug():
     conn = get_db()
