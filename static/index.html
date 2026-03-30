@@ -206,8 +206,10 @@ let igUser = '';
 // ── API ──
 
 async function api(path, opts = {}) {
-  const res = await fetch(path, {
+  const sep = path.includes('?') ? '&' : '?';
+  const res = await fetch(path + sep + '_t=' + Date.now(), {
     headers: { 'Content-Type': 'application/json' },
+    cache: 'no-store',
     ...opts,
   });
   if (!res.ok) {
