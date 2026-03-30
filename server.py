@@ -6,6 +6,8 @@ import logging
 import os
 import threading
 import time
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone, timedelta
 
 from fastapi import FastAPI, HTTPException
@@ -125,6 +127,11 @@ class ColumnCreate(BaseModel):
     name: str
 
 
+class MonthlyViewEntry(BaseModel):
+    month: str
+    month_views: int
+
+
 class IGLoginReq(BaseModel):
     username: str
     password: str
@@ -162,13 +169,43 @@ def auth_instagram_logout():
     return {"ok": True}
 
 
+# ── Months ───────────────────────────────────────────────────
+
+
+@app.get("/api/months")
+def list_months():
+    conn = get_db()
+    reel_months = conn.execute(
+        "SELECT DISTINCT substr(posted_date, 1, 7) AS month FROM reels "
+        "WHERE posted_date IS NOT NULL AND posted_date != ''"
+    ).fetchall()
+    mv_months = conn.execute(
+        "SELECT DISTINCT month FROM monthly_views WHERE month IS NOT NULL AND month != ''"
+    ).fetchall()
+    conn.close()
+    all_months = sorted(
+        set(
+            [r["month"] for r in reel_months if r["month"]]
+            + [r["month"] for r in mv_months if r["month"]]
+        ),
+        reverse=True,
+    )
+    return {"months": all_months}
+
+
 # ── Reels CRUD ──────────────────────────────────────────────
 
 
 @app.get("/api/reels")
-def list_reels():
+def list_reels(month: str | None = None):
     conn = get_db()
-    reels = conn.execute("SELECT * FROM reels ORDER BY created_at DESC").fetchall()
+    if month and month != "all":
+        reels = conn.execute(
+            "SELECT * FROM reels WHERE substr(posted_date, 1, 7) = ? ORDER BY created_at DESC",
+            (month,),
+        ).fetchall()
+    else:
+        reels = conn.execute("SELECT * FROM reels ORDER BY created_at DESC").fetchall()
     result = []
     for r in reels:
         latest = conn.execute(
@@ -186,6 +223,27 @@ def list_reels():
         if latest and prev and latest["views"] is not None and prev["views"] is not None:
             growth = latest["views"] - prev["views"]
 
+        # Build monthly_views — values are already deltas
+        mv_rows = conn.execute(
+            "SELECT month, cumulative_views, is_manual FROM monthly_views "
+            "WHERE reel_id = ? ORDER BY month",
+            (r["id"],),
+        ).fetchall()
+        monthly_views_list = []
+        mv_sum = 0
+        for mv in mv_rows:
+            views_val = mv["cumulative_views"] or 0
+            monthly_views_list.append({
+                "month": mv["month"],
+                "views": views_val,
+                "is_manual": bool(mv["is_manual"]),
+            })
+            mv_sum += views_val
+
+        # current_month_auto: total views minus sum of all monthly entries
+        total_views = latest["views"] if latest and latest["views"] is not None else 0
+        current_month_auto = max(total_views - mv_sum, 0)
+
         result.append({
             "id": r["id"],
             "url": r["url"],
@@ -200,6 +258,8 @@ def list_reels():
             "comments": latest["comments"] if latest else None,
             "last_fetched": latest["fetched_at"] if latest else None,
             "growth": growth,
+            "monthly_views": monthly_views_list,
+            "current_month_auto": current_month_auto,
         })
     conn.close()
     return {"reels": result}
@@ -277,6 +337,26 @@ def delete_reel(reel_id: int):
     return {"ok": True}
 
 
+@app.put("/api/reels/{reel_id}/monthly-views")
+def set_monthly_views(reel_id: int, data: MonthlyViewEntry):
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO monthly_views (reel_id, month, cumulative_views, is_manual) "
+        "VALUES (?, ?, ?, 1) "
+        "ON CONFLICT(reel_id, month) DO UPDATE SET cumulative_views=excluded.cumulative_views, "
+        "is_manual=1, updated_at=datetime('now')",
+        (reel_id, data.month, data.month_views),
+    )
+    # Delete all future auto-entries so they recalculate correctly
+    conn.execute(
+        "DELETE FROM monthly_views WHERE reel_id = ? AND month > ? AND is_manual = 0",
+        (reel_id, data.month),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 # ── Custom Columns ──────────────────────────────────────────
 
 
@@ -312,7 +392,9 @@ def delete_column(col_id: int):
 
 # ── Refresh Views (background with progress) ───────────────
 
-DELAY_BETWEEN_REQUESTS = 2  # seconds — avoids rate limits
+DELAY_IG = 1.5       # seconds — Instagram rate-limit safe
+DELAY_FB = 2         # seconds — Facebook/Playwright needs sequential pacing
+YT_WORKERS = 3       # concurrent yt-dlp fetches
 
 _refresh_state = {
     "running": False,
@@ -324,56 +406,135 @@ _refresh_state = {
 _refresh_lock = threading.Lock()
 
 
-def _refresh_worker(reel_rows: list):
-    """Runs in background thread. Fetches one reel at a time with delays."""
-    for i, reel in enumerate(reel_rows):
-        reel_id, url, existing_posted = reel["id"], reel["url"], reel["posted_date"]
+def _process_single_reel(reel: dict) -> None:
+    """Fetch data for a single reel and persist to DB. Thread-safe."""
+    reel_id, url, existing_posted = reel["id"], reel["url"], reel["posted_date"]
 
-        with _refresh_lock:
-            _refresh_state["current_url"] = url
+    with _refresh_lock:
+        _refresh_state["current_url"] = url
 
-        data = fetch_reel_data(url)
+    data = fetch_reel_data(url)
 
-        if "error" in data:
-            with _refresh_lock:
-                _refresh_state["completed"] += 1
-                _refresh_state["errors"] += 1
-            if i < len(reel_rows) - 1:
-                time.sleep(DELAY_BETWEEN_REQUESTS)
-            continue
-
-        conn = get_db()
-        conn.execute(
-            "INSERT INTO snapshots (reel_id, views, likes, comments) VALUES (?, ?, ?, ?)",
-            (reel_id, data.get("views"), data.get("likes"), data.get("comments")),
-        )
-
-        updates, params = [], []
-        if not existing_posted and data.get("posted_date"):
-            updates.append("posted_date = ?")
-            params.append(data["posted_date"])
-        if data.get("title"):
-            row = conn.execute("SELECT title FROM reels WHERE id = ?", (reel_id,)).fetchone()
-            if not row["title"]:
-                updates.append("title = ?")
-                params.append(data["title"])
-        if data.get("account"):
-            row2 = conn.execute("SELECT account FROM reels WHERE id = ?", (reel_id,)).fetchone()
-            if not row2["account"]:
-                updates.append("account = ?")
-                params.append(data["account"])
-        if updates:
-            params.append(reel_id)
-            conn.execute(f"UPDATE reels SET {', '.join(updates)} WHERE id = ?", params)
-
-        conn.commit()
-        conn.close()
-
+    if "error" in data:
         with _refresh_lock:
             _refresh_state["completed"] += 1
+            _refresh_state["errors"] += 1
+        return
 
-        if i < len(reel_rows) - 1:
-            time.sleep(DELAY_BETWEEN_REQUESTS)
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO snapshots (reel_id, views, likes, comments) VALUES (?, ?, ?, ?)",
+        (reel_id, data.get("views"), data.get("likes"), data.get("comments")),
+    )
+
+    updates, params = [], []
+    if not existing_posted and data.get("posted_date"):
+        updates.append("posted_date = ?")
+        params.append(data["posted_date"])
+    if data.get("title"):
+        row = conn.execute("SELECT title FROM reels WHERE id = ?", (reel_id,)).fetchone()
+        if not row["title"]:
+            updates.append("title = ?")
+            params.append(data["title"])
+    if data.get("account"):
+        row2 = conn.execute("SELECT account FROM reels WHERE id = ?", (reel_id,)).fetchone()
+        if not row2["account"]:
+            updates.append("account = ?")
+            params.append(data["account"])
+    if updates:
+        params.append(reel_id)
+        conn.execute(f"UPDATE reels SET {', '.join(updates)} WHERE id = ?", params)
+
+    # Auto-populate monthly_views for current month as delta (skip if manual entry exists)
+    current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+    total_views = data.get("views")
+    if total_views is not None:
+        existing = conn.execute(
+            "SELECT is_manual FROM monthly_views WHERE reel_id = ? AND month = ?",
+            (reel_id, current_month),
+        ).fetchone()
+        if not existing or not existing["is_manual"]:
+            # Sum of all previous months' deltas (stored in cumulative_views column)
+            prev_sum_row = conn.execute(
+                "SELECT COALESCE(SUM(cumulative_views), 0) AS s FROM monthly_views "
+                "WHERE reel_id = ? AND month < ?",
+                (reel_id, current_month),
+            ).fetchone()
+            previous_months_sum = prev_sum_row["s"]
+            current_month_views = max(total_views - previous_months_sum, 0)
+            conn.execute(
+                "INSERT INTO monthly_views (reel_id, month, cumulative_views, is_manual) "
+                "VALUES (?, ?, ?, 0) "
+                "ON CONFLICT(reel_id, month) DO UPDATE SET cumulative_views=excluded.cumulative_views, "
+                "updated_at=datetime('now') WHERE is_manual = 0",
+                (reel_id, current_month, current_month_views),
+            )
+
+    conn.commit()
+    conn.close()
+
+    with _refresh_lock:
+        _refresh_state["completed"] += 1
+
+
+def _process_ig(reels: list) -> None:
+    """Process Instagram reels sequentially with 1.5s delay."""
+    for i, reel in enumerate(reels):
+        _process_single_reel(reel)
+        if i < len(reels) - 1:
+            time.sleep(DELAY_IG)
+
+
+def _process_youtube(reels: list) -> None:
+    """Process YouTube reels with up to 3 concurrent workers."""
+    with ThreadPoolExecutor(max_workers=YT_WORKERS) as pool:
+        futures = {pool.submit(_process_single_reel, reel): reel for reel in reels}
+        for future in as_completed(futures):
+            # Exceptions inside _process_single_reel are already handled,
+            # but catch anything unexpected so the thread doesn't die.
+            try:
+                future.result()
+            except Exception:
+                logger.exception("YouTube worker unexpected error for %s", futures[future]["url"])
+
+
+def _process_fb(reels: list) -> None:
+    """Process Facebook reels sequentially with 2s delay (Playwright)."""
+    for i, reel in enumerate(reels):
+        _process_single_reel(reel)
+        if i < len(reels) - 1:
+            time.sleep(DELAY_FB)
+
+
+def _refresh_worker(reel_rows: list):
+    """Runs in background thread. Splits reels by platform and processes in parallel."""
+    # Group reels by platform
+    by_platform: dict[str, list] = defaultdict(list)
+    for reel in reel_rows:
+        by_platform[reel["platform"]].append(reel)
+
+    platform_handlers = {
+        "instagram": _process_ig,
+        "youtube": _process_youtube,
+        "facebook": _process_fb,
+    }
+
+    # Launch one thread per platform that has reels
+    threads: list[threading.Thread] = []
+    for platform, reels in by_platform.items():
+        handler = platform_handlers.get(platform)
+        if not handler:
+            # Unknown platform — process sequentially with default delay
+            handler = _process_ig
+        t = threading.Thread(target=handler, args=(reels,), daemon=True)
+        t.name = f"refresh-{platform}"
+        threads.append(t)
+        t.start()
+        logger.info("Refresh: started %s thread for %d reels", platform, len(reels))
+
+    # Wait for all platform threads to finish
+    for t in threads:
+        t.join()
 
     with _refresh_lock:
         _refresh_state["running"] = False
@@ -387,7 +548,7 @@ def refresh_views():
             raise HTTPException(409, "Refresh already in progress")
 
     conn = get_db()
-    reels = conn.execute("SELECT id, url, posted_date FROM reels").fetchall()
+    reels = conn.execute("SELECT id, url, posted_date, platform FROM reels").fetchall()
     conn.close()
 
     if not reels:
@@ -403,7 +564,17 @@ def refresh_views():
     thread = threading.Thread(target=_refresh_worker, args=(list(reels),), daemon=True)
     thread.start()
 
-    return {"started": True, "total": len(reels), "est_seconds": len(reels) * (DELAY_BETWEEN_REQUESTS + 3)}
+    # Estimate: platforms run in parallel, so total time ~ slowest platform
+    by_plat: dict[str, int] = defaultdict(int)
+    for r in reels:
+        by_plat[r["platform"]] += 1
+    avg_fetch = 3  # seconds per fetch on average
+    ig_est = by_plat.get("instagram", 0) * (DELAY_IG + avg_fetch)
+    yt_est = (by_plat.get("youtube", 0) / YT_WORKERS) * avg_fetch  # concurrent
+    fb_est = by_plat.get("facebook", 0) * (DELAY_FB + avg_fetch)
+    est_seconds = int(max(ig_est, yt_est, fb_est, 0))
+
+    return {"started": True, "total": len(reels), "est_seconds": est_seconds}
 
 
 @app.get("/api/refresh/progress")
@@ -451,7 +622,7 @@ def _trigger_refresh() -> bool:
             return False
 
     conn = get_db()
-    reels = conn.execute("SELECT id, url, posted_date FROM reels").fetchall()
+    reels = conn.execute("SELECT id, url, posted_date, platform FROM reels").fetchall()
     conn.close()
 
     if not reels:
@@ -564,6 +735,68 @@ def monthly_analytics():
     return {"months": [{"month": m, "views": v} for m, v in sorted(totals.items(), reverse=True)]}
 
 
+@app.get("/api/analytics/cohort-summary")
+def cohort_summary():
+    conn = get_db()
+    reels = conn.execute("SELECT id, posted_date, account FROM reels").fetchall()
+    # month_cohorts: { calendar_month: { "M0": total, "M1": total, ... } }
+    month_cohorts: dict[str, dict[str, int]] = {}
+    # by_account: { calendar_month: { account_name: total_views } }
+    month_accounts: dict[str, dict[str, int]] = {}
+
+    for reel in reels:
+        posted = reel["posted_date"]
+        if not posted or len(posted) < 7:
+            continue
+        posted_ym = posted[:7]
+        account = reel["account"] or "Unknown"
+
+        # Try monthly_views first (values are already deltas), fall back to snapshots
+        mv_rows = conn.execute(
+            "SELECT month, cumulative_views FROM monthly_views "
+            "WHERE reel_id = ? ORDER BY month",
+            (reel["id"],),
+        ).fetchall()
+
+        if mv_rows:
+            for mv in mv_rows:
+                delta = mv["cumulative_views"] or 0
+                if delta <= 0:
+                    continue
+                cal_month = mv["month"]
+                age = _month_diff(cal_month, posted_ym)
+                if age < 0:
+                    continue
+                label = f"M{age}"
+                month_cohorts.setdefault(cal_month, {})
+                month_cohorts[cal_month][label] = month_cohorts[cal_month].get(label, 0) + delta
+                month_accounts.setdefault(cal_month, {})
+                month_accounts[cal_month][account] = month_accounts[cal_month].get(account, 0) + delta
+        else:
+            # Fallback: compute from snapshots
+            gains = _monthly_gains_for_reel(conn, reel["id"], posted)
+            for cal_month, gain in gains.items():
+                if gain <= 0:
+                    continue
+                age = _month_diff(cal_month, posted_ym)
+                if age < 0:
+                    continue
+                label = f"M{age}"
+                month_cohorts.setdefault(cal_month, {})
+                month_cohorts[cal_month][label] = month_cohorts[cal_month].get(label, 0) + gain
+                month_accounts.setdefault(cal_month, {})
+                month_accounts[cal_month][account] = month_accounts[cal_month].get(account, 0) + gain
+
+    conn.close()
+    summary = []
+    for m in sorted(month_cohorts.keys(), reverse=True):
+        cohorts = month_cohorts[m]
+        total = sum(cohorts.values())
+        by_account = month_accounts.get(m, {})
+        summary.append({"month": m, "cohorts": cohorts, "total": total, "by_account": by_account})
+    return {"summary": summary}
+
+
 @app.get("/api/analytics/distribution")
 def distribution_analytics():
     conn = get_db()
@@ -587,6 +820,129 @@ def distribution_analytics():
         label = f"M{age}" + (" (posting month)" if age == 0 else "")
         result.append({"age": age, "label": label, "views": age_views[age], "reel_count": len(age_reels.get(age, set()))})
     return {"distribution": result}
+
+
+@app.get("/api/analytics/pivot")
+def pivot_analytics(group_by: str = "account"):
+    """Pivot table. account/platform: rows=labels, cols=months. month: rows=months, cols=M0/M1/M2."""
+    if group_by not in ("account", "platform", "month"):
+        raise HTTPException(400, "group_by must be 'account', 'platform', or 'month'")
+
+    conn = get_db()
+    current_month = datetime.now(timezone.utc).strftime("%Y-%m")
+
+    if group_by == "month":
+        # Cohort view: rows = calendar months, columns = M0, M1, M2...
+        # M0 = views from reels posted that month, M1 = views from reels posted previous month, etc.
+        reels = conn.execute("SELECT id, posted_date FROM reels WHERE posted_date IS NOT NULL").fetchall()
+        # { calendar_month: { age: total_views } }
+        month_cohorts: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+
+        for reel in reels:
+            posted_ym = reel["posted_date"][:7] if len(reel["posted_date"]) >= 7 else None
+            if not posted_ym:
+                continue
+            mv_rows = conn.execute(
+                "SELECT month, cumulative_views FROM monthly_views WHERE reel_id = ? ORDER BY month",
+                (reel["id"],),
+            ).fetchall()
+            mv_sum = 0
+            for mv in mv_rows:
+                views = mv["cumulative_views"] or 0
+                if views > 0:
+                    age = _month_diff(mv["month"], posted_ym)
+                    if age >= 0:
+                        month_cohorts[mv["month"]][age] += views
+                    mv_sum += views
+            # Current month auto
+            latest = conn.execute(
+                "SELECT views FROM snapshots WHERE reel_id = ? ORDER BY fetched_at DESC LIMIT 1",
+                (reel["id"],),
+            ).fetchone()
+            total_views = latest["views"] if latest and latest["views"] is not None else 0
+            auto_val = max(total_views - mv_sum, 0)
+            if auto_val > 0:
+                age = _month_diff(current_month, posted_ym)
+                if age >= 0:
+                    month_cohorts[current_month][age] += auto_val
+
+        conn.close()
+
+        # Find max age
+        max_age = 0
+        for cohorts in month_cohorts.values():
+            if cohorts:
+                max_age = max(max_age, max(cohorts.keys()))
+
+        cols = [f"M{i}" for i in range(max_age + 1)]
+        rows = []
+        column_totals: dict[str, int] = defaultdict(int)
+        grand_total = 0
+
+        for month in sorted(month_cohorts.keys(), reverse=True):
+            cohorts = month_cohorts[month]
+            row_total = sum(cohorts.values())
+            grand_total += row_total
+            months_dict = {}
+            for age, views in cohorts.items():
+                key = f"M{age}"
+                months_dict[key] = views
+                column_totals[key] += views
+            rows.append({"label": month, "months": months_dict, "total": row_total})
+
+        return {
+            "months": cols,
+            "rows": rows,
+            "totals": {"months": dict(column_totals), "total": grand_total},
+        }
+
+    # account / platform grouping
+    reels = conn.execute("SELECT id, account, platform FROM reels").fetchall()
+    row_data: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+    for reel in reels:
+        label = (reel["account"] or "Unknown") if group_by == "account" else (reel["platform"] or "Unknown")
+        mv_rows = conn.execute(
+            "SELECT month, cumulative_views FROM monthly_views WHERE reel_id = ?",
+            (reel["id"],),
+        ).fetchall()
+        mv_sum = 0
+        for mv in mv_rows:
+            views = mv["cumulative_views"] or 0
+            if views > 0:
+                row_data[label][mv["month"]] += views
+                mv_sum += views
+        latest = conn.execute(
+            "SELECT views FROM snapshots WHERE reel_id = ? ORDER BY fetched_at DESC LIMIT 1",
+            (reel["id"],),
+        ).fetchone()
+        total_views = latest["views"] if latest and latest["views"] is not None else 0
+        auto_val = max(total_views - mv_sum, 0)
+        if auto_val > 0:
+            row_data[label][current_month] += auto_val
+
+    conn.close()
+
+    all_months: set[str] = set()
+    for months_dict in row_data.values():
+        all_months.update(months_dict.keys())
+
+    rows = []
+    column_totals = defaultdict(int)
+    grand_total = 0
+    for label in sorted(row_data.keys()):
+        months_dict = row_data[label]
+        row_total = sum(months_dict.values())
+        grand_total += row_total
+        for m, v in months_dict.items():
+            column_totals[m] += v
+        rows.append({"label": label, "months": dict(months_dict), "total": row_total})
+
+    return {
+        "months": sorted(all_months),
+        "rows": rows,
+        "totals": {"months": dict(sorted(column_totals.items())), "total": grand_total},
+    }
 
 
 if __name__ == "__main__":

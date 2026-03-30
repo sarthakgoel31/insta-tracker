@@ -518,9 +518,35 @@ async def _fetch_fb_playwright(url: str) -> dict:
                         name = re.sub(r"[^\w\s.'-]", "", lines[i - 1]).strip()
                         if name and len(name) > 1:
                             result["account"] = name
+
+                    # Parse date from nearby lines (FB shows dates like "Feb 27", "Mar 22" near account)
+                    # Check a few lines around the account name / "•" / "Follow" area
+                    date_months = {
+                        "Jan": 1, "Feb": 2, "Mar": 3, "Apr": 4, "May": 5, "Jun": 6,
+                        "Jul": 7, "Aug": 8, "Sep": 9, "Oct": 10, "Nov": 11, "Dec": 12,
+                    }
+                    date_pattern = r"(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+\d{1,2}"
+                    search_start = max(0, i - 3)
+                    search_end = min(len(lines), i + 5)
+                    for j in range(search_start, search_end):
+                        # Strip unicode non-breaking spaces etc
+                        cleaned = re.sub(r"[^\x20-\x7E]", " ", lines[j]).strip()
+                        dm = re.search(date_pattern, cleaned)
+                        if dm:
+                            try:
+                                date_str = dm.group(0)
+                                parsed = datetime.strptime(date_str, "%b %d")
+                                result["posted_date"] = parsed.replace(year=datetime.now().year).strftime("%Y-%m-%d")
+                            except Exception:
+                                pass
+                            break
+
                     # Caption is after "Follow" line
                     if i + 2 < len(lines):
                         cap = lines[i + 2]
+                        # Clean date from caption/title if it leaked in
+                        if cap:
+                            cap = re.sub(date_pattern, "", re.sub(r"[^\x20-\x7E]", " ", cap)).strip()
                         if cap and len(cap) > 5 and not any(c in cap for c in ["󱘺", "ओरिजनल"]):
                             result["title"] = cap.replace("... और", "").replace("... and", "").strip()[:100]
                     break

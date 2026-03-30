@@ -111,6 +111,25 @@
   .banner { padding: 12px 20px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
   .banner-warn { background: #fef3c7; border: 1px solid #f59e0b; color: #92400e; }
   .banner a { color: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; }
+
+  /* Tab bar */
+  .tab-bar { display: flex; gap: 8px; margin-bottom: 20px; overflow-x: auto; padding-bottom: 4px; }
+  .tab { padding: 8px 16px; border: 1px solid var(--border); border-radius: 20px; font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; background: var(--card); color: var(--text); transition: all .15s; }
+  .tab:hover { border-color: var(--accent); }
+  .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+  .tab-add { border-style: dashed; color: var(--muted); }
+
+  /* Month cell styles */
+  .month-cell { cursor: pointer; border-bottom: 1px dashed var(--border); padding-bottom: 1px; }
+  .month-cell:hover { border-color: var(--accent); }
+  .month-auto { color: var(--accent); font-style: italic; }
+
+  /* Pivot table styles */
+  .pivot-controls { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
+  .pivot-controls label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+  .pivot-controls select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; outline: none; background: var(--card); }
+  .pivot-controls select:focus { border-color: var(--accent); }
+  .pivot-total-row td, .pivot-total-row th { font-weight: 700 !important; border-top: 2px solid var(--border); }
 </style>
 </head>
 <body>
@@ -129,7 +148,9 @@
   </div>
 </div>
 
-<div class="card">
+<div class="tab-bar" id="tabBar"></div>
+
+<div class="card" id="contentCard">
   <h2>Content</h2>
   <form class="add-form" onsubmit="addReel(event)">
     <input name="url" placeholder="Paste URL (Instagram, YouTube, Facebook)" required>
@@ -169,10 +190,27 @@
   <div id="emptyState" class="empty" style="display:none">No content yet. Paste a URL above to start tracking.</div>
 </div>
 
-<div class="card">
+<div class="card" id="monthlyCard">
   <h2>Monthly Views</h2>
   <div id="monthlyChart"></div>
   <div id="monthlyEmpty" class="empty" style="display:none">No data yet. Refresh views first.</div>
+</div>
+
+<div class="card" id="summaryCard" style="display:none">
+  <h2>Summary</h2>
+  <div class="pivot-controls">
+    <div>
+      <label for="pivotGroupBy">Group by</label><br>
+      <select id="pivotGroupBy" onchange="loadPivotData()">
+        <option value="account">Account</option>
+        <option value="platform">Platform</option>
+        <option value="month">Month</option>
+      </select>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table id="summaryTable"></table>
+  </div>
 </div>
 
 <!-- Settings Modal -->
@@ -223,6 +261,17 @@ https://www.facebook.com/reel/123456"></textarea>
   </div>
 </div>
 
+<!-- Monthly Views History Modal -->
+<div class="modal-overlay" id="historyModal" style="display:none" onclick="if(event.target===this)closeHistory()">
+  <div class="modal">
+    <div class="modal-header">
+      <h3 id="historyTitle">Monthly Views</h3>
+      <button class="modal-close" onclick="closeHistory()">&times;</button>
+    </div>
+    <div class="modal-body" id="historyBody"></div>
+  </div>
+</div>
+
 <!-- Loading overlay -->
 <div class="loading" id="loadingOverlay" style="display:none">
   <div class="loading-box">
@@ -241,6 +290,10 @@ let columns = [];
 let monthlyData = [];
 let igState = 'disconnected'; // 'disconnected' | '2fa' | 'connected'
 let igUser = '';
+let availableMonths = [];
+let activeTab = 'all';
+let cohortSummary = [];
+let pivotData = null;
 
 // ── API ──
 
@@ -262,15 +315,37 @@ async function api(path, opts = {}) {
 
 async function loadAll() {
   try {
-    const [r, c, m, s] = await Promise.all([
-      api('/api/reels'),
+    // Build the reels endpoint based on active tab
+    let reelsUrl = '/api/reels';
+    if (activeTab !== 'all' && activeTab !== 'summary') {
+      reelsUrl = '/api/reels?month=' + encodeURIComponent(activeTab);
+    }
+
+    const promises = [
+      api(reelsUrl),
       api('/api/columns'),
       api('/api/analytics/monthly'),
       api('/api/status'),
-    ]);
+      api('/api/months'),
+    ];
+
+    // If summary tab, also fetch pivot data
+    if (activeTab === 'summary') {
+      const groupBy = document.getElementById('pivotGroupBy')?.value || 'account';
+      promises.push(api('/api/analytics/pivot?group_by=' + groupBy));
+    }
+
+    const results = await Promise.all(promises);
+    const [r, c, m, s, mo] = results;
+
     reels = r.reels;
     columns = c.columns;
     monthlyData = m.months;
+    availableMonths = mo.months || [];
+
+    if (activeTab === 'summary' && results[5]) {
+      pivotData = results[5];
+    }
 
     if (s.instagram.logged_in) {
       igState = 'connected';
@@ -293,13 +368,99 @@ async function loadAll() {
 // ── Render ──
 
 function render() {
+  renderTabs();
   renderTable();
-  renderMonthly();
+
+  const contentCard = document.getElementById('contentCard');
+  const monthlyCard = document.getElementById('monthlyCard');
+  const summaryCard = document.getElementById('summaryCard');
+
+  if (activeTab === 'summary') {
+    contentCard.style.display = 'none';
+    monthlyCard.style.display = 'none';
+    summaryCard.style.display = 'block';
+    renderSummary();
+  } else if (activeTab === 'all') {
+    contentCard.style.display = 'block';
+    monthlyCard.style.display = 'block';
+    summaryCard.style.display = 'none';
+    renderMonthly();
+  } else {
+    // Specific month tab
+    contentCard.style.display = 'block';
+    monthlyCard.style.display = 'none';
+    summaryCard.style.display = 'none';
+  }
+}
+
+function renderTabs() {
+  const bar = document.getElementById('tabBar');
+  let html = '';
+
+  // "All" tab
+  html += `<div class="tab${activeTab === 'all' ? ' active' : ''}" onclick="switchTab('all')">All</div>`;
+
+  // "Summary" tab
+  html += `<div class="tab${activeTab === 'summary' ? ' active' : ''}" onclick="switchTab('summary')">Summary</div>`;
+
+  // Month tabs
+  availableMonths.forEach(m => {
+    html += `<div class="tab${activeTab === m ? ' active' : ''}" onclick="switchTab('${esc(m)}')">${formatMonth(m)}</div>`;
+  });
+
+  // "+ Add Month" tab
+  html += `<div class="tab tab-add" onclick="addMonthTab()">+ Add Month</div>`;
+
+  bar.innerHTML = html;
+}
+
+function switchTab(tab) {
+  activeTab = tab;
+  loadAll();
+}
+
+function addMonthTab() {
+  const input = prompt('Enter month (YYYY-MM):', new Date().toISOString().slice(0, 7));
+  if (!input) return;
+  const trimmed = input.trim();
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(trimmed)) {
+    toast('Invalid format. Use YYYY-MM (e.g., 2026-03)');
+    return;
+  }
+  if (!availableMonths.includes(trimmed)) {
+    availableMonths.push(trimmed);
+    availableMonths.sort();
+  }
+  switchTab(trimmed);
 }
 
 function platformBadge(p) {
   const labels = { instagram: 'IG', youtube: 'YT', facebook: 'FB' };
   return `<span class="badge badge-${p || 'unknown'}">${labels[p] || '?'}</span>`;
+}
+
+function formatDate(d) {
+  if (!d) return '--';
+  const parts = d.split('-');
+  if (parts.length !== 3) return d;
+  return `${parts[2]}-${parts[1]}-${parts[0]}`;
+}
+
+function getMonthRange(startMonth, endMonth) {
+  const months = [];
+  let [y, m] = startMonth.split('-').map(Number);
+  const [ey, em] = endMonth.split('-').map(Number);
+  while (y < ey || (y === ey && m <= em)) {
+    months.push(`${y}-${String(m).padStart(2, '0')}`);
+    m++;
+    if (m > 12) { m = 1; y++; }
+  }
+  return months;
+}
+
+function getCurrentMonth() {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
 }
 
 function renderTable() {
@@ -337,11 +498,22 @@ function renderTable() {
     }
   });
 
+  const isMonthTab = activeTab !== 'all' && activeTab !== 'summary';
+
+  if (isMonthTab) {
+    renderMonthTable(head, body, empty, filtered);
+  } else {
+    renderAllTable(head, body, empty, filtered);
+  }
+}
+
+function renderAllTable(head, body, empty, filtered) {
   let th = '<tr><th></th><th>URL</th><th>Account</th><th>Title</th><th>Posted</th>';
   columns.forEach(c => {
     th += `<th class="col-header">${esc(c.name)}<button class="col-delete" onclick="deleteColumn(${c.id})" title="Remove column">&times;</button></th>`;
   });
-  th += '<th class="num">Views</th><th class="num">Comments</th><th class="num">Growth</th><th></th></tr>';
+  th += '<th class="num">Views</th><th class="num">Comments</th><th class="num">Growth</th>';
+  th += '<th></th></tr>';
   head.innerHTML = th;
 
   if (!filtered.length) {
@@ -365,7 +537,6 @@ function renderTable() {
       return `<td><span class="editable" onclick="editCustom(${r.id}, '${esc(c.name)}', this)">${esc(val) || '--'}</span></td>`;
     }).join('');
 
-    // Shorten URL for display
     let short = r.url
       .replace(/https?:\/\/(www\.)?(instagram\.com|youtube\.com|youtu\.be|facebook\.com|fb\.watch)\//, '')
       .replace(/\/$/, '');
@@ -376,7 +547,7 @@ function renderTable() {
       <td class="url-cell"><a href="${esc(r.url)}" target="_blank">${esc(short)}</a></td>
       <td>${r.account ? esc(r.account) : '--'}</td>
       <td><span class="editable" onclick="editField(${r.id}, 'title', this)">${esc(r.title) || '--'}</span></td>
-      <td>${r.posted_date || '--'}</td>
+      <td>${formatDate(r.posted_date)}</td>
       ${customCells}
       <td class="num">${r.views !== null ? fmt(r.views) : '--'}</td>
       <td class="num">${r.comments !== null ? fmt(r.comments) : '--'}</td>
@@ -384,6 +555,105 @@ function renderTable() {
       <td><button class="btn btn-danger" onclick="deleteReel(${r.id})">Delete</button></td>
     </tr>`;
   }).join('');
+}
+
+function renderMonthTable(head, body, empty, filtered) {
+  const curMonth = getCurrentMonth();
+  // If activeTab is after current month, just show that single month
+  const endMonth = activeTab > curMonth ? activeTab : curMonth;
+  const monthCols = getMonthRange(activeTab, endMonth);
+
+  // Header: Platform | URL | Account | Title | [month columns...] | Total | Delete
+  let th = '<tr><th></th><th>URL</th><th>Account</th><th>Title</th>';
+  monthCols.forEach((m, idx) => {
+    const isLast = idx === monthCols.length - 1;
+    const label = formatMonth(m);
+    if (isLast) {
+      th += `<th class="num" style="color:var(--accent);font-style:italic">${esc(label)}</th>`;
+    } else {
+      th += `<th class="num">${esc(label)}</th>`;
+    }
+  });
+  th += '<th class="num">Total</th><th></th></tr>';
+  head.innerHTML = th;
+
+  if (!filtered.length) {
+    body.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  empty.style.display = 'none';
+
+  body.innerHTML = filtered.map(r => {
+    // Build a map of month -> views from the reel's monthly_views
+    const mvMap = {};
+    (r.monthly_views || []).forEach(mv => { mvMap[mv.month] = mv.views; });
+
+    // Use the API-provided current_month_auto value
+    const autoVal = r.current_month_auto || 0;
+
+    let monthCells = monthCols.map((m, idx) => {
+      const isLast = idx === monthCols.length - 1;
+      if (isLast) {
+        // Current month: show stored value if exists, otherwise auto-calc
+        const storedVal = mvMap[m];
+        const displayVal = storedVal != null ? storedVal : (r.current_month_auto || 0);
+        return `<td class="num"><span class="month-auto">${fmt(displayVal)}</span></td>`;
+      } else {
+        // Editable past month cell
+        const val = mvMap[m] || 0;
+        const display = val > 0 ? fmt(val) : '--';
+        return `<td class="num"><span class="month-cell" onclick="editMonthCell(${r.id}, '${esc(m)}', this)">${display}</span></td>`;
+      }
+    }).join('');
+
+    let short = r.url
+      .replace(/https?:\/\/(www\.)?(instagram\.com|youtube\.com|youtu\.be|facebook\.com|fb\.watch)\//, '')
+      .replace(/\/$/, '');
+    if (short.length > 30) short = short.slice(0, 28) + '...';
+
+    return `<tr>
+      <td>${platformBadge(r.platform)}</td>
+      <td class="url-cell"><a href="${esc(r.url)}" target="_blank">${esc(short)}</a></td>
+      <td>${r.account ? esc(r.account) : '--'}</td>
+      <td><span class="editable" onclick="editField(${r.id}, 'title', this)">${esc(r.title) || '--'}</span></td>
+      ${monthCells}
+      <td class="num" style="font-weight:600">${r.views !== null ? fmt(r.views) : '--'}</td>
+      <td><button class="btn btn-danger" onclick="deleteReel(${r.id})">Delete</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function editMonthCell(reelId, month, el) {
+  const current = el.textContent === '--' ? '' : el.textContent.replace(/,/g, '');
+  const input = document.createElement('input');
+  input.className = 'edit-input';
+  input.type = 'number';
+  input.value = current;
+  input.style.width = '90px';
+  input.style.textAlign = 'right';
+  el.replaceWith(input);
+  input.focus();
+
+  async function save() {
+    const val = input.value.trim();
+    if (val === '' || val === current) {
+      await loadAll();
+      return;
+    }
+    try {
+      await api(`/api/reels/${reelId}/monthly-views`, {
+        method: 'PUT',
+        body: JSON.stringify({ month, month_views: parseInt(val, 10) })
+      });
+      await loadAll();
+    } catch (e) {
+      toast('Error: ' + e.message);
+      await loadAll();
+    }
+  }
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') loadAll(); });
 }
 
 function renderMonthly() {
@@ -399,6 +669,161 @@ function renderMonthly() {
       <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div><span class="bar-value">${fmt(m.views)}</span></div>
     </div>`;
   }).join('');
+}
+
+async function loadPivotData() {
+  const groupBy = document.getElementById('pivotGroupBy').value;
+  try {
+    pivotData = await api('/api/analytics/pivot?group_by=' + groupBy);
+    renderSummary();
+  } catch (e) {
+    toast('Failed to load pivot: ' + e.message);
+  }
+}
+
+function renderSummary() {
+  const table = document.getElementById('summaryTable');
+
+  if (!pivotData || !pivotData.rows || !pivotData.rows.length) {
+    table.innerHTML = '<tr><td class="empty">No data yet. Add reels and refresh views first.</td></tr>';
+    return;
+  }
+
+  const cols = pivotData.months || [];
+  const rows = pivotData.rows || [];
+  const totals = pivotData.totals || {};
+  const groupBy = document.getElementById('pivotGroupBy')?.value || 'account';
+  const groupLabel = groupBy === 'month' ? 'Month' : (groupBy === 'platform' ? 'Platform' : 'Account');
+  const isMonthGroup = groupBy === 'month';
+  // For month grouping, cols are M0/M1/M2; for others, cols are YYYY-MM months
+
+  // Header row
+  let html = `<thead><tr><th>${esc(groupLabel)}</th>`;
+  cols.forEach(c => {
+    html += `<th class="num">${isMonthGroup ? esc(c) : formatMonth(c)}</th>`;
+  });
+  html += '<th class="num">Total</th></tr></thead><tbody>';
+
+  // Data rows
+  rows.forEach(row => {
+    const rowLabel = isMonthGroup ? formatMonth(row.label) : row.label;
+    html += `<tr><td><strong>${esc(rowLabel)}</strong></td>`;
+    cols.forEach(c => {
+      const val = row.months && row.months[c] ? row.months[c] : 0;
+      html += `<td class="num">${val > 0 ? fmt(val) : '--'}</td>`;
+    });
+    html += `<td class="num" style="font-weight:600">${row.total ? fmt(row.total) : '--'}</td>`;
+    html += '</tr>';
+  });
+
+  // Totals row
+  const totalCols = totals.months || {};
+  html += `<tr class="pivot-total-row"><td><strong>Total</strong></td>`;
+  cols.forEach(c => {
+    const val = totalCols[c] || 0;
+    html += `<td class="num"><strong>${val > 0 ? fmt(val) : '--'}</strong></td>`;
+  });
+  html += `<td class="num"><strong>${totals.total ? fmt(totals.total) : '--'}</strong></td>`;
+  html += '</tr>';
+
+  html += '</tbody>';
+  table.innerHTML = html;
+}
+
+// ── History Modal ──
+
+function openHistory(reelId) {
+  const reel = reels.find(r => r.id === reelId);
+  if (!reel) return toast('Reel not found');
+
+  const titleEl = document.getElementById('historyTitle');
+  titleEl.textContent = 'Monthly Views — ' + (reel.title || reel.url);
+
+  const body = document.getElementById('historyBody');
+  const mv = reel.monthly_views || [];
+
+  let html = '<table style="width:100%"><thead><tr><th>Month</th><th class="num">Cumulative</th><th class="num">Month Views</th><th></th></tr></thead><tbody>';
+
+  mv.forEach((entry, idx) => {
+    const monthViews = idx === 0 ? (entry.cumulative || 0) : ((entry.cumulative || 0) - (mv[idx - 1].cumulative || 0));
+    html += `<tr>
+      <td>${formatMonth(entry.month)}</td>
+      <td class="num"><span class="editable" onclick="editMonthlyView(${reelId}, '${esc(entry.month)}', this)">${entry.cumulative !== null && entry.cumulative !== undefined ? fmt(entry.cumulative) : '--'}</span></td>
+      <td class="num">${fmt(monthViews)}</td>
+      <td></td>
+    </tr>`;
+  });
+
+  // Add backfill row
+  html += `<tr style="border-top:2px solid var(--border)">
+    <td><input id="histNewMonth" class="edit-input" placeholder="YYYY-MM" style="width:100px" value="${new Date().toISOString().slice(0, 7)}"></td>
+    <td><input id="histNewCum" class="edit-input" placeholder="Cumulative views" style="width:120px;text-align:right" type="number"></td>
+    <td></td>
+    <td><button class="btn btn-primary btn-sm" onclick="saveHistoryEntry(${reelId})">Save</button></td>
+  </tr>`;
+
+  html += '</tbody></table>';
+  body.innerHTML = html;
+
+  document.getElementById('historyModal').style.display = 'flex';
+}
+
+function closeHistory() {
+  document.getElementById('historyModal').style.display = 'none';
+}
+
+async function editMonthlyView(reelId, month, el) {
+  const current = el.textContent === '--' ? '' : el.textContent.replace(/,/g, '');
+  const input = document.createElement('input');
+  input.className = 'edit-input';
+  input.type = 'number';
+  input.value = current;
+  input.style.width = '120px';
+  input.style.textAlign = 'right';
+  el.replaceWith(input);
+  input.focus();
+
+  async function save() {
+    const val = input.value.trim();
+    if (val === '') return openHistory(reelId);
+    try {
+      await api(`/api/reels/${reelId}/monthly-views`, {
+        method: 'PUT',
+        body: JSON.stringify({ month, cumulative: parseInt(val, 10) })
+      });
+      await loadAll();
+      openHistory(reelId);
+    } catch (e) {
+      toast('Error: ' + e.message);
+      openHistory(reelId);
+    }
+  }
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') openHistory(reelId); });
+}
+
+async function saveHistoryEntry(reelId) {
+  const month = document.getElementById('histNewMonth').value.trim();
+  const cum = document.getElementById('histNewCum').value.trim();
+
+  if (!month || !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
+    return toast('Invalid month format. Use YYYY-MM.');
+  }
+  if (!cum || isNaN(parseInt(cum, 10))) {
+    return toast('Enter a valid cumulative view count.');
+  }
+
+  try {
+    await api(`/api/reels/${reelId}/monthly-views`, {
+      method: 'PUT',
+      body: JSON.stringify({ month, cumulative: parseInt(cum, 10) })
+    });
+    toast('Saved');
+    await loadAll();
+    openHistory(reelId);
+  } catch (e) {
+    toast('Error: ' + e.message);
+  }
 }
 
 // ── Actions ──
