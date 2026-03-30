@@ -4,3 +4,5 @@ instaloader
 yt-dlp
 playwright
 httpx
+pytesseract
+Pillow
