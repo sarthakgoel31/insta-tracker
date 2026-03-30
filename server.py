@@ -70,6 +70,16 @@ def root():
     return FileResponse("static/index.html")
 
 
+@app.get("/api/debug")
+def debug():
+    conn = get_db()
+    count = conn.execute("SELECT COUNT(*) FROM reels").fetchone()[0]
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(reels)").fetchall()]
+    rows = conn.execute("SELECT id, url, platform FROM reels").fetchall()
+    conn.close()
+    return {"count": count, "columns": cols, "rows": [dict(r) for r in rows]}
+
+
 # ── Models ──────────────────────────────────────────────────
 
 
