@@ -1,8 +1,0 @@
-[phases.setup]
-nixPkgs = ["tesseract", "chromium"]
-
-[phases.install]
-cmds = ["pip install -r requirements.txt", "playwright install chromium --with-deps"]
-
-[start]
-cmd = "uvicorn server:app --host 0.0.0.0 --port ${PORT:-8501}"
