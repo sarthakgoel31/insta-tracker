@@ -35,6 +35,14 @@
   .add-form input[name="url"] { flex: 2; min-width: 240px; }
   .add-form input[name="title"] { flex: 1; min-width: 120px; }
 
+  .filter-bar { display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+  .filter-bar select, .filter-bar input {
+    padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px;
+    font-size: 14px; outline: none; background: var(--card);
+  }
+  .filter-bar select:focus, .filter-bar input:focus { border-color: var(--accent); }
+  .filter-bar label { font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+
   .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th { text-align: left; padding: 10px 12px; font-weight: 600; color: var(--muted); font-size: 12px; text-transform: uppercase; border-bottom: 2px solid var(--border); white-space: nowrap; }
@@ -51,9 +59,6 @@
   .editable { cursor: pointer; border-bottom: 1px dashed var(--border); padding-bottom: 1px; }
   .editable:hover { border-color: var(--accent); }
   .edit-input { padding: 4px 8px; border: 1px solid var(--accent); border-radius: 4px; font-size: 13px; width: 100%; outline: none; }
-
-  .analytics { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
-  @media (max-width: 768px) { .analytics { grid-template-columns: 1fr; } }
 
   .bar-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
   .bar-label { width: 90px; font-size: 13px; color: var(--muted); text-align: right; flex-shrink: 0; }
@@ -131,6 +136,30 @@
     <input name="title" placeholder="Title (optional)">
     <button class="btn btn-primary" type="submit">Add</button>
   </form>
+  <div class="filter-bar">
+    <div>
+      <label for="filterPlatform">Platform</label><br>
+      <select id="filterPlatform" onchange="renderTable()">
+        <option value="all">All</option>
+        <option value="instagram">Instagram</option>
+        <option value="youtube">YouTube</option>
+        <option value="facebook">Facebook</option>
+      </select>
+    </div>
+    <div>
+      <label for="filterAccount">Account</label><br>
+      <input id="filterAccount" type="text" placeholder="Filter by account..." oninput="renderTable()">
+    </div>
+    <div>
+      <label for="sortBy">Sort by</label><br>
+      <select id="sortBy" onchange="renderTable()">
+        <option value="date-desc">Date Posted (newest)</option>
+        <option value="date-asc">Date Posted (oldest)</option>
+        <option value="views-desc">Views (high to low)</option>
+        <option value="views-asc">Views (low to high)</option>
+      </select>
+    </div>
+  </div>
   <div class="table-wrap">
     <table>
       <thead id="tableHead"></thead>
@@ -140,17 +169,10 @@
   <div id="emptyState" class="empty" style="display:none">No content yet. Paste a URL above to start tracking.</div>
 </div>
 
-<div class="analytics">
-  <div class="card">
-    <h2>Monthly Views</h2>
-    <div id="monthlyChart"></div>
-    <div id="monthlyEmpty" class="empty" style="display:none">No data yet. Refresh views first.</div>
-  </div>
-  <div class="card">
-    <h2>Age Distribution</h2>
-    <div id="distChart"></div>
-    <div id="distEmpty" class="empty" style="display:none">Need posted dates to calculate distribution.</div>
-  </div>
+<div class="card">
+  <h2>Monthly Views</h2>
+  <div id="monthlyChart"></div>
+  <div id="monthlyEmpty" class="empty" style="display:none">No data yet. Refresh views first.</div>
 </div>
 
 <!-- Settings Modal -->
@@ -217,7 +239,6 @@ https://www.facebook.com/reel/123456"></textarea>
 let reels = [];
 let columns = [];
 let monthlyData = [];
-let distData = [];
 let igState = 'disconnected'; // 'disconnected' | '2fa' | 'connected'
 let igUser = '';
 
@@ -241,17 +262,15 @@ async function api(path, opts = {}) {
 
 async function loadAll() {
   try {
-    const [r, c, m, d, s] = await Promise.all([
+    const [r, c, m, s] = await Promise.all([
       api('/api/reels'),
       api('/api/columns'),
       api('/api/analytics/monthly'),
-      api('/api/analytics/distribution'),
       api('/api/status'),
     ]);
     reels = r.reels;
     columns = c.columns;
     monthlyData = m.months;
-    distData = d.distribution;
 
     if (s.instagram.logged_in) {
       igState = 'connected';
@@ -276,7 +295,6 @@ async function loadAll() {
 function render() {
   renderTable();
   renderMonthly();
-  renderDist();
 }
 
 function platformBadge(p) {
@@ -289,6 +307,36 @@ function renderTable() {
   const body = document.getElementById('tableBody');
   const empty = document.getElementById('emptyState');
 
+  // Read filter/sort values
+  const platformFilter = document.getElementById('filterPlatform').value;
+  const accountFilter = document.getElementById('filterAccount').value.trim().toLowerCase();
+  const sortBy = document.getElementById('sortBy').value;
+
+  // Filter
+  let filtered = reels.slice();
+  if (platformFilter !== 'all') {
+    filtered = filtered.filter(r => r.platform === platformFilter);
+  }
+  if (accountFilter) {
+    filtered = filtered.filter(r => r.account && r.account.toLowerCase().includes(accountFilter));
+  }
+
+  // Sort
+  filtered.sort((a, b) => {
+    switch (sortBy) {
+      case 'date-desc':
+        return (b.posted_date || '').localeCompare(a.posted_date || '');
+      case 'date-asc':
+        return (a.posted_date || '').localeCompare(b.posted_date || '');
+      case 'views-desc':
+        return (b.views ?? -1) - (a.views ?? -1);
+      case 'views-asc':
+        return (a.views ?? Infinity) - (b.views ?? Infinity);
+      default:
+        return 0;
+    }
+  });
+
   let th = '<tr><th></th><th>URL</th><th>Account</th><th>Title</th><th>Posted</th>';
   columns.forEach(c => {
     th += `<th class="col-header">${esc(c.name)}<button class="col-delete" onclick="deleteColumn(${c.id})" title="Remove column">&times;</button></th>`;
@@ -296,14 +344,14 @@ function renderTable() {
   th += '<th class="num">Views</th><th class="num">Comments</th><th class="num">Growth</th><th></th></tr>';
   head.innerHTML = th;
 
-  if (!reels.length) {
+  if (!filtered.length) {
     body.innerHTML = '';
     empty.style.display = 'block';
     return;
   }
   empty.style.display = 'none';
 
-  body.innerHTML = reels.map(r => {
+  body.innerHTML = filtered.map(r => {
     const g = r.growth;
     let growthHtml = '<span class="growth-zero">--</span>';
     if (g !== null && g !== undefined) {
@@ -349,21 +397,6 @@ function renderMonthly() {
     return `<div class="bar-row">
       <div class="bar-label">${formatMonth(m.month)}</div>
       <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div><span class="bar-value">${fmt(m.views)}</span></div>
-    </div>`;
-  }).join('');
-}
-
-function renderDist() {
-  const el = document.getElementById('distChart');
-  const empty = document.getElementById('distEmpty');
-  if (!distData.length) { el.innerHTML = ''; empty.style.display = 'block'; return; }
-  empty.style.display = 'none';
-  const max = Math.max(...distData.map(d => d.views), 1);
-  el.innerHTML = distData.map(d => {
-    const pct = (d.views / max * 100).toFixed(1);
-    return `<div class="bar-row">
-      <div class="bar-label">${esc(d.label)}</div>
-      <div class="bar-track"><div class="bar-fill" style="width:${pct}%"></div><span class="bar-value">${fmt(d.views)} <small>(${d.reel_count} reels)</small></span></div>
     </div>`;
   }).join('');
 }

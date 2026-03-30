@@ -2,10 +2,11 @@
 
 import base64
 import json
+import logging
 import os
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -22,6 +23,9 @@ from scraper import (
     ig_logout,
     ig_username,
 )
+
+logger = logging.getLogger("insta-tracker")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 
 app = FastAPI()
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -78,6 +82,10 @@ def startup():
                     _export_cookies_to_json(L)
             except Exception:
                 pass
+
+    # Start daily cron refresh thread
+    cron_thread = threading.Thread(target=_cron_loop, daemon=True)
+    cron_thread.start()
 
 
 @app.get("/")
@@ -404,6 +412,98 @@ def refresh_progress():
         return dict(_refresh_state)
 
 
+# ── Daily Cron Refresh (8:00 AM IST / 2:30 AM UTC) ──────────
+
+CRON_HOUR_UTC = 2
+CRON_MINUTE_UTC = 30
+
+_cron_state = {
+    "enabled": True,
+    "last_run": None,   # ISO string or None
+    "next_run": None,   # ISO string
+}
+_cron_lock = threading.Lock()
+
+
+def _seconds_until_next_cron() -> float:
+    """Return seconds until the next 02:30 UTC."""
+    now = datetime.now(timezone.utc)
+    target = now.replace(hour=CRON_HOUR_UTC, minute=CRON_MINUTE_UTC, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+def _next_cron_iso() -> str:
+    """Return the next 02:30 UTC as a human-readable string."""
+    now = datetime.now(timezone.utc)
+    target = now.replace(hour=CRON_HOUR_UTC, minute=CRON_MINUTE_UTC, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return target.strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _trigger_refresh() -> bool:
+    """Trigger a refresh if one is not already running. Returns True if started."""
+    with _refresh_lock:
+        if _refresh_state["running"]:
+            logger.info("Cron: skipping — manual refresh already in progress")
+            return False
+
+    conn = get_db()
+    reels = conn.execute("SELECT id, url, posted_date FROM reels").fetchall()
+    conn.close()
+
+    if not reels:
+        logger.info("Cron: no reels to refresh")
+        return False
+
+    with _refresh_lock:
+        _refresh_state["running"] = True
+        _refresh_state["total"] = len(reels)
+        _refresh_state["completed"] = 0
+        _refresh_state["errors"] = 0
+        _refresh_state["current_url"] = ""
+
+    thread = threading.Thread(target=_refresh_worker, args=(list(reels),), daemon=True)
+    thread.start()
+    return True
+
+
+def _cron_loop():
+    """Background daemon: sleep until 02:30 UTC, trigger refresh, repeat."""
+    with _cron_lock:
+        _cron_state["next_run"] = _next_cron_iso()
+
+    logger.info("Cron: daily refresh scheduled — next run at %s", _cron_state["next_run"])
+
+    while True:
+        wait = _seconds_until_next_cron()
+        logger.info("Cron: sleeping %.0f seconds until next run", wait)
+        time.sleep(wait)
+
+        logger.info("Cron: 8:00 AM IST — starting daily refresh")
+        started = _trigger_refresh()
+
+        with _cron_lock:
+            _cron_state["last_run"] = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            _cron_state["next_run"] = _next_cron_iso()
+
+        if started:
+            logger.info("Cron: refresh started successfully")
+        else:
+            logger.info("Cron: refresh was not started (already running or no reels)")
+
+        # Sleep a bit to avoid double-trigger if the loop resumes within the same minute
+        time.sleep(61)
+
+
+@app.get("/api/cron/status")
+def cron_status():
+    with _cron_lock:
+        return dict(_cron_state)
+
+
 # ── Snapshots ───────────────────────────────────────────────
 
 
@@ -428,7 +528,7 @@ def _month_diff(ym1: str, ym2: str) -> int:
     return (y1 - y2) * 12 + (m1 - m2)
 
 
-def _monthly_gains_for_reel(conn, reel_id: int) -> dict[str, int]:
+def _monthly_gains_for_reel(conn, reel_id: int, posted_date: str | None = None) -> dict[str, int]:
     rows = conn.execute(
         "SELECT views, fetched_at FROM snapshots WHERE reel_id = ? AND views IS NOT NULL ORDER BY fetched_at",
         (reel_id,),
@@ -441,17 +541,24 @@ def _monthly_gains_for_reel(conn, reel_id: int) -> dict[str, int]:
     months = sorted(month_last.keys())
     gains = {}
     for i, m in enumerate(months):
-        gains[m] = month_last[m] - (month_last[months[i - 1]] if i > 0 else 0)
+        if i == 0:
+            # Attribute first snapshot's views to the reel's posted month,
+            # not the snapshot month. E.g. reel posted Feb, first snapshot
+            # in March → views go under Feb.
+            target_month = posted_date[:7] if posted_date else m
+            gains[target_month] = gains.get(target_month, 0) + month_last[m]
+        else:
+            gains[m] = gains.get(m, 0) + month_last[m] - month_last[months[i - 1]]
     return gains
 
 
 @app.get("/api/analytics/monthly")
 def monthly_analytics():
     conn = get_db()
-    reels = conn.execute("SELECT id FROM reels").fetchall()
+    reels = conn.execute("SELECT id, posted_date FROM reels").fetchall()
     totals: dict[str, int] = {}
     for reel in reels:
-        for month, gain in _monthly_gains_for_reel(conn, reel["id"]).items():
+        for month, gain in _monthly_gains_for_reel(conn, reel["id"], reel["posted_date"]).items():
             totals[month] = totals.get(month, 0) + max(gain, 0)
     conn.close()
     return {"months": [{"month": m, "views": v} for m, v in sorted(totals.items(), reverse=True)]}
@@ -468,7 +575,7 @@ def distribution_analytics():
         if not posted:
             continue
         posted_ym = posted[:7]
-        for month, gain in _monthly_gains_for_reel(conn, reel["id"]).items():
+        for month, gain in _monthly_gains_for_reel(conn, reel["id"], posted).items():
             age = _month_diff(month, posted_ym)
             if age < 0:
                 continue
