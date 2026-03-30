@@ -1,4 +1,4 @@
-"""FastAPI server for Social Tracker."""
+"""FastAPI server for MBB Social Branding Tracker."""
 
 import base64
 import json
