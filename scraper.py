@@ -377,28 +377,69 @@ def fetch_instagram(url: str) -> dict:
 # ── YouTube (yt-dlp — works accurately) ───────────────────
 
 
+def _extract_yt_video_id(url: str) -> str | None:
+    """Extract video ID from various YouTube URL formats."""
+    patterns = [
+        r"(?:youtube\.com/shorts/|youtube\.com/watch\?v=|youtu\.be/)([\w-]{11})",
+    ]
+    for p in patterns:
+        m = re.search(p, url)
+        if m:
+            return m.group(1)
+    return None
+
+
 def fetch_youtube(url: str) -> dict:
+    """Fetch YouTube video data via direct HTML scraping (no yt-dlp, no cookies needed)."""
+    import httpx
+
+    video_id = _extract_yt_video_id(url)
+    if not video_id:
+        return {"error": "Could not extract YouTube video ID from URL"}
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
     try:
-        result = subprocess.run(
-            ["yt-dlp", "--dump-json", "--no-download", "--no-check-certificates", url],
-            capture_output=True, text=True, timeout=30,
-        )
-        if result.returncode != 0:
-            lines = result.stderr.strip().split("\n")
-            return {"error": lines[-1] if lines else "Unknown error"}
-        meta = json.loads(result.stdout)
-        upload = meta.get("upload_date")
-        posted = f"{upload[:4]}-{upload[4:6]}-{upload[6:8]}" if upload else None
-        return {
-            "views": meta.get("view_count"), "likes": meta.get("like_count"),
-            "comments": meta.get("comment_count"), "posted_date": posted,
-            "title": (meta.get("title") or "")[:100],
-            "account": meta.get("uploader") or meta.get("channel") or "",
-        }
-    except subprocess.TimeoutExpired:
-        return {"error": "Timeout"}
+        resp = httpx.get(f"https://www.youtube.com/shorts/{video_id}",
+                         headers=headers, timeout=15, follow_redirects=True)
+        html = resp.text
+
+        # Extract viewCount from embedded JSON
+        view_match = re.search(r'"viewCount":"(\d+)"', html)
+        views = int(view_match.group(1)) if view_match else None
+
+        # Extract title from og:title (most reliable)
+        title_match = re.search(r'<meta property="og:title" content="(.*?)"', html)
+        title = title_match.group(1)[:100] if title_match else ""
+
+        # Extract author/channel from videoDetails
+        author_match = re.search(r'"videoDetails".*?"author":"(.*?)"', html)
+        if not author_match:
+            author_match = re.search(r'"author":"(.*?)"', html)
+        account = author_match.group(1) if author_match else ""
+
+        # Extract upload date from microformat
+        date_match = re.search(r'"uploadDate":"(\d{4}-\d{2}-\d{2})', html)
+        posted = date_match.group(1) if date_match else None
+
+        # Extract likes from accessibility label
+        likes = None
+        likes_match = re.search(r'"accessibilityData":\{"label":"([\d,]+)\s+likes"', html)
+        if likes_match:
+            likes = int(likes_match.group(1).replace(",", ""))
+
+        if views is not None:
+            return {
+                "views": views, "likes": likes, "comments": None,
+                "posted_date": posted, "title": title, "account": account,
+            }
+
+        return {"error": "Could not extract view count from YouTube page"}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"YouTube fetch failed: {e}"}
 
 
 # ── Facebook: Playwright ──────────────────────────────────
