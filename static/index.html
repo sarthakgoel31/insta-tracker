@@ -570,8 +570,8 @@ function renderMonthTable(head, body, empty, filtered) {
   const endMonth = activeTab > curMonth ? activeTab : curMonth;
   const monthCols = getMonthRange(activeTab, endMonth);
 
-  // Header: Platform | URL | Account | Title | [month columns...] | Total | Delete
-  let th = '<tr><th></th><th>URL</th><th>Account</th><th>Title</th>';
+  // Header: Platform | URL | Account | Title | Posted | [month columns...] | Total | Delete
+  let th = '<tr><th></th><th>URL</th><th>Account</th><th>Title</th><th>Posted</th>';
   monthCols.forEach((m, idx) => {
     const isLast = idx === monthCols.length - 1;
     const label = formatMonth(m);
@@ -624,6 +624,7 @@ function renderMonthTable(head, body, empty, filtered) {
       <td class="url-cell"><a href="${esc(r.url)}" target="_blank">${esc(short)}</a></td>
       <td>${r.account ? esc(r.account) : '--'}</td>
       <td><span class="editable" onclick="editField(${r.id}, 'title', this)">${esc(r.title) || '--'}</span></td>
+      <td>${r.posted_date ? formatDate(r.posted_date) : '--'}</td>
       ${monthCells}
       <td class="num" style="font-weight:600">${r.views !== null ? fmt(r.views) : '--'}</td>
       <td><button class="btn btn-danger" onclick="deleteReel(${r.id})">Delete</button></td>
