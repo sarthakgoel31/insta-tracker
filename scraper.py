@@ -431,12 +431,94 @@ def _fetch_ig_instaloader(shortcode: str) -> dict | None:
         return None
 
 
+def _fetch_ig_embed(shortcode: str) -> dict | None:
+    """Fetch via Instagram embed page — no auth needed, works from any IP."""
+    import httpx
+
+    try:
+        resp = httpx.get(
+            f"https://www.instagram.com/reel/{shortcode}/embed/",
+            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
+            timeout=15, follow_redirects=True,
+        )
+        if resp.status_code != 200:
+            return None
+        html = resp.text
+
+        views = None
+        for pattern in [r'"video_view_count":(\d+)', r'"video_views":(\d+)', r'"play_count":(\d+)']:
+            # Embed page has escaped JSON: \"video_view_count\":123
+            for p in [pattern, pattern.replace('"', r'\\"')]:
+                m = re.search(p, html)
+                if m:
+                    views = int(m.group(1))
+                    break
+            if views is not None:
+                break
+
+        if views is None:
+            return None
+
+        # Extract other metadata
+        likes = None
+        for p in [r'"edge_media_preview_like":\{[^}]*"count":(\d+)', r'\\"edge_media_preview_like\\":\{[^}]*\\"count\\":(\d+)',
+                  r'"like_count":(\d+)', r'\\"like_count\\":(\d+)']:
+            m = re.search(p, html)
+            if m:
+                likes = int(m.group(1))
+                break
+
+        comments = None
+        for p in [r'"edge_media_to_comment":\{[^}]*"count":(\d+)', r'\\"edge_media_to_comment\\":\{[^}]*\\"count\\":(\d+)',
+                  r'"comment_count":(\d+)', r'\\"comment_count\\":(\d+)']:
+            m = re.search(p, html)
+            if m:
+                comments = int(m.group(1))
+                break
+
+        account = ""
+        for p in [r'"owner":\{[^}]*"username":"([^"]+)"', r'\\"owner\\":\{[^}]*\\"username\\":\\"([^\\]+)\\"']:
+            m = re.search(p, html)
+            if m:
+                account = m.group(1)
+                break
+
+        posted = None
+        for p in [r'"taken_at_timestamp":(\d+)', r'\\"taken_at_timestamp\\":(\d+)']:
+            m = re.search(p, html)
+            if m:
+                posted = datetime.fromtimestamp(int(m.group(1)), tz=timezone.utc).strftime("%Y-%m-%d")
+                break
+
+        caption = ""
+        for p in [r'"text":"((?:[^"\\]|\\.)*)"', r'\\"text\\":\\"((?:[^\\]|\\.)*?)\\"']:
+            m = re.search(p, html)
+            if m:
+                raw = m.group(1).replace('\\"', '"').replace("\\n", " ").replace("\\\\", "\\")
+                # Clean up any JSON artifacts
+                caption = re.sub(r'["\}{\[\]].*', '', raw).strip()[:100]
+                break
+
+        return {
+            "views": views, "likes": likes, "comments": comments or 0,
+            "posted_date": posted, "title": caption, "account": account,
+        }
+    except Exception as e:
+        logger.warning("IG embed fetch failed for %s: %s", shortcode, e)
+        return None
+
+
 def fetch_instagram(url: str) -> dict:
     shortcode = _extract_ig_shortcode(url)
     if not shortcode:
         return {"error": "Invalid Instagram URL"}
 
-    # Strategy 1: Instaloader with saved session (most reliable)
+    # Strategy 1: Embed page (no auth, works from any IP)
+    result = _fetch_ig_embed(shortcode)
+    if result and result.get("views") is not None:
+        return result
+
+    # Strategy 2: Instaloader with saved session
     result = _fetch_ig_instaloader(shortcode)
     if result and result.get("views") is not None:
         return result
