@@ -98,8 +98,11 @@ def root():
 @app.get("/api/test-scrape")
 def test_scrape(url: str):
     """Debug endpoint: test scraping a single URL and return raw result."""
-    from scraper import fetch_reel_data
-    return fetch_reel_data(url)
+    from scraper import fetch_reel_data, _ig_instaloader_last_error
+    result = fetch_reel_data(url)
+    if "error" in result and _ig_instaloader_last_error:
+        result["instaloader_error"] = _ig_instaloader_last_error
+    return result
 
 
 @app.get("/api/debug")
