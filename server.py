@@ -120,12 +120,26 @@ def debug_ig_cookies():
     cookie_dict = _get_ig_cookies_dict()
     has_env = bool(os.environ.get("IG_COOKIES_B64"))
     has_file = IG_COOKIES_FILE.exists()
+    # Also check instaloader session
+    from scraper import _get_ig_loader, SESSION_FILE
+    has_session_file = SESSION_FILE.exists()
+    has_session_env = bool(os.environ.get("IG_SESSION_B64"))
+    loader_logged_in = False
+    try:
+        L = _get_ig_loader()
+        loader_logged_in = L.context.is_logged_in
+    except Exception as e:
+        loader_logged_in = f"error: {e}"
+
     return {
         "source": "env" if has_env else ("file" if has_file else "none"),
         "cookie_count": len(cookie_list),
         "has_sessionid": bool(cookie_dict.get("sessionid")),
         "has_csrftoken": bool(cookie_dict.get("csrftoken")),
         "cookie_names": list(cookie_dict.keys()),
+        "instaloader_session_file": has_session_file,
+        "instaloader_session_env": has_session_env,
+        "instaloader_logged_in": loader_logged_in,
     }
 
 
