@@ -6,3 +6,5 @@ playwright
 httpx
 pytesseract
 Pillow
+gspread
+google-auth

@@ -139,6 +139,10 @@ class MonthlyViewEntry(BaseModel):
     month_views: int
 
 
+class SheetExport(BaseModel):
+    sheet_url: str
+
+
 class IGLoginReq(BaseModel):
     username: str
     password: str
@@ -955,6 +959,104 @@ def pivot_analytics(group_by: str = "account"):
         "rows": rows,
         "totals": {"months": dict(sorted(column_totals.items())), "total": grand_total},
     }
+
+
+# ── Export to Google Sheet ──────────────────────────────────
+
+
+@app.post("/api/export-sheet")
+def export_to_sheet(data: SheetExport):
+    """Push all reels data to a Google Sheet. Requires GOOGLE_SERVICE_ACCOUNT_B64 env var."""
+    sa_b64 = os.environ.get("GOOGLE_SERVICE_ACCOUNT_B64")
+    if not sa_b64:
+        raise HTTPException(400, "Google service account not configured. Set GOOGLE_SERVICE_ACCOUNT_B64 env var.")
+
+    try:
+        import gspread
+        from google.oauth2.service_account import Credentials
+    except ImportError:
+        raise HTTPException(500, "gspread not installed")
+
+    try:
+        sa_json = json.loads(base64.b64decode(sa_b64))
+        creds = Credentials.from_service_account_info(sa_json, scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+        ])
+        gc = gspread.authorize(creds)
+    except Exception as e:
+        raise HTTPException(500, f"Auth failed: {e}")
+
+    # Extract sheet ID from URL
+    import re
+    m = re.search(r"/spreadsheets/d/([a-zA-Z0-9_-]+)", data.sheet_url)
+    if not m:
+        raise HTTPException(400, "Invalid Google Sheets URL")
+    sheet_id = m.group(1)
+
+    try:
+        sh = gc.open_by_key(sheet_id)
+    except Exception as e:
+        raise HTTPException(400, f"Cannot access sheet. Share it with the service account email. Error: {e}")
+
+    # Get all reels data
+    conn = get_db()
+    reels = conn.execute("SELECT * FROM reels ORDER BY created_at DESC").fetchall()
+
+    # Collect all months across all reels
+    all_months: set[str] = set()
+    reel_data = []
+    for r in reels:
+        latest = conn.execute(
+            "SELECT views, likes, comments FROM snapshots WHERE reel_id = ? ORDER BY fetched_at DESC LIMIT 1",
+            (r["id"],),
+        ).fetchone()
+        mv_rows = conn.execute(
+            "SELECT month, cumulative_views FROM monthly_views WHERE reel_id = ? ORDER BY month",
+            (r["id"],),
+        ).fetchall()
+        mv_map = {}
+        for mv in mv_rows:
+            mv_map[mv["month"]] = mv["cumulative_views"] or 0
+            all_months.add(mv["month"])
+        reel_data.append({"reel": r, "latest": latest, "mv_map": mv_map})
+    conn.close()
+
+    sorted_months = sorted(all_months)
+
+    # Build header
+    header = ["Platform", "URL", "Account", "Title", "Posted", "Views", "Likes", "Comments"]
+    header.extend([m for m in sorted_months])
+
+    # Build rows
+    rows = [header]
+    for rd in reel_data:
+        r = rd["reel"]
+        l = rd["latest"]
+        row = [
+            r["platform"] or "",
+            r["url"] or "",
+            r["account"] or "",
+            r["title"] or "",
+            r["posted_date"] or "",
+            l["views"] if l and l["views"] is not None else "",
+            l["likes"] if l and l["likes"] is not None else "",
+            l["comments"] if l and l["comments"] is not None else "",
+        ]
+        for m in sorted_months:
+            row.append(rd["mv_map"].get(m, ""))
+        rows.append(row)
+
+    # Write to sheet
+    try:
+        try:
+            ws = sh.worksheet("Tracker Export")
+            ws.clear()
+        except gspread.exceptions.WorksheetNotFound:
+            ws = sh.add_worksheet("Tracker Export", rows=len(rows) + 1, cols=len(header))
+        ws.update(rows, value_input_option="RAW")
+        return {"ok": True, "rows": len(rows) - 1, "sheet": f"Tracker Export"}
+    except Exception as e:
+        raise HTTPException(500, f"Failed to write: {e}")
 
 
 if __name__ == "__main__":
