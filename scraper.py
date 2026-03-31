@@ -234,6 +234,62 @@ def ig_logout():
     _ig_logged_out = True
 
 
+def ig_auto_refresh_cookies() -> dict:
+    """Auto-login via Instagram web API to get fresh sessionid cookies.
+    Uses IG_USERNAME + IG_PASSWORD env vars. Returns {success, cookies_count} or {error}."""
+    global _ig_logged_out
+    import httpx
+
+    username = os.environ.get("IG_USERNAME", "")
+    password = os.environ.get("IG_PASSWORD", "")
+    if not username or not password:
+        return {"error": "IG_USERNAME or IG_PASSWORD env var not set"}
+
+    try:
+        ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
+        client = httpx.Client(follow_redirects=True, timeout=15)
+
+        # Get CSRF token
+        r = client.get("https://www.instagram.com/accounts/login/", headers={"User-Agent": ua})
+        csrf = r.cookies.get("csrftoken", "")
+        if not csrf:
+            return {"error": "Could not get CSRF token"}
+
+        # Login
+        r2 = client.post("https://www.instagram.com/accounts/login/ajax/", headers={
+            "User-Agent": ua, "X-Requested-With": "XMLHttpRequest",
+            "Referer": "https://www.instagram.com/accounts/login/",
+            "X-IG-App-ID": IG_APP_ID, "X-CSRFToken": csrf,
+        }, data={
+            "enc_password": f"#PWD_INSTAGRAM_BROWSER:0:0:{password}",
+            "username": username, "queryParams": "{}",
+        }, cookies={"csrftoken": csrf})
+
+        data = r2.json()
+        if not data.get("authenticated"):
+            return {"error": f"Login failed: {data.get('message', 'not authenticated')}"}
+
+        # Export cookies
+        cookies = dict(client.cookies)
+        if not cookies.get("sessionid"):
+            return {"error": "Login succeeded but no sessionid in response"}
+
+        cookie_list = [{"name": n, "value": v, "domain": ".instagram.com", "path": "/",
+                        "secure": True, "httpOnly": False, "sameSite": "None"}
+                       for n, v in cookies.items()]
+
+        DATA_DIR.mkdir(exist_ok=True)
+        IG_COOKIES_FILE.write_text(json.dumps(cookie_list, indent=2))
+        USERNAME_FILE.write_text(username)
+        _ig_logged_out = False
+
+        logger.info("Auto-refreshed IG cookies for %s (%d cookies)", username, len(cookie_list))
+        return {"success": True, "cookies_count": len(cookie_list)}
+    except Exception as e:
+        logger.warning("IG auto-refresh failed: %s", e)
+        return {"error": str(e)}
+
+
 # ── Instagram: GraphQL API (primary) ──────────────────────
 
 
