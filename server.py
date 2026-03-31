@@ -112,6 +112,23 @@ def debug():
     return {"count": count, "columns": cols, "rows": [dict(r) for r in rows]}
 
 
+@app.get("/api/debug/ig-cookies")
+def debug_ig_cookies():
+    """Check IG cookie status without exposing values."""
+    from scraper import _get_ig_cookies_list, _get_ig_cookies_dict, IG_COOKIES_FILE
+    cookie_list = _get_ig_cookies_list()
+    cookie_dict = _get_ig_cookies_dict()
+    has_env = bool(os.environ.get("IG_COOKIES_B64"))
+    has_file = IG_COOKIES_FILE.exists()
+    return {
+        "source": "env" if has_env else ("file" if has_file else "none"),
+        "cookie_count": len(cookie_list),
+        "has_sessionid": bool(cookie_dict.get("sessionid")),
+        "has_csrftoken": bool(cookie_dict.get("csrftoken")),
+        "cookie_names": list(cookie_dict.keys()),
+    }
+
+
 # ── Models ──────────────────────────────────────────────────
 
 
