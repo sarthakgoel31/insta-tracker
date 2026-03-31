@@ -405,13 +405,18 @@ async def _fetch_ig_playwright(url: str) -> dict:
         return {"error": "Could not extract view count. Login may be required."}
 
 
+_ig_instaloader_last_error = ""
+
 def _fetch_ig_instaloader(shortcode: str) -> dict | None:
     """Use instaloader with saved session to fetch post data. Most reliable method."""
+    global _ig_instaloader_last_error
     try:
         L = _get_ig_loader()
         if not L.context.is_logged_in:
+            _ig_instaloader_last_error = "not logged in"
             return None
         post = instaloader.Post.from_shortcode(L.context, shortcode)
+        _ig_instaloader_last_error = ""
         return {
             "views": post.video_view_count,
             "likes": post.likes,
@@ -421,6 +426,7 @@ def _fetch_ig_instaloader(shortcode: str) -> dict | None:
             "account": post.owner_username or "",
         }
     except Exception as e:
+        _ig_instaloader_last_error = str(e)
         logger.warning("Instaloader fetch failed for %s: %s", shortcode, e)
         return None
 
