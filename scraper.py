@@ -29,6 +29,7 @@ USERNAME_FILE = DATA_DIR / "ig_username.txt"
 IG_COOKIES_FILE = DATA_DIR / "ig_cookies.json"
 
 _pending_login: dict = {"loader": None, "username": ""}
+_ig_logged_out: bool = False  # Set by ig_logout() to suppress env var cookies
 
 # Instagram GraphQL — doc_id rotates every few weeks, update when needed
 IG_GRAPHQL_URL = "https://www.instagram.com/api/graphql"
@@ -154,11 +155,17 @@ def ig_is_logged_in() -> bool:
 
 
 def ig_username() -> str | None:
-    return USERNAME_FILE.read_text().strip() if USERNAME_FILE.exists() else None
+    if USERNAME_FILE.exists():
+        return USERNAME_FILE.read_text().strip()
+    # Try to get from cookies (ds_user_id doesn't give username, but check env)
+    cookies = _get_ig_cookies_dict()
+    if cookies.get("sessionid"):
+        return cookies.get("ds_user_id", "")
+    return None
 
 
 def ig_login(username: str, password: str) -> dict:
-    global _pending_login
+    global _pending_login, _ig_logged_out
     L = instaloader.Instaloader()
     try:
         L.login(username, password)
@@ -167,6 +174,7 @@ def ig_login(username: str, password: str) -> dict:
         USERNAME_FILE.write_text(username)
         _export_cookies_to_json(L)
         _pending_login = {"loader": None, "username": ""}
+        _ig_logged_out = False
         return {"success": True, "username": username}
     except TwoFactorAuthRequiredException:
         _pending_login = {"loader": L, "username": username}
@@ -178,7 +186,7 @@ def ig_login(username: str, password: str) -> dict:
 
 
 def ig_2fa(code: str) -> dict:
-    global _pending_login
+    global _pending_login, _ig_logged_out
     L = _pending_login.get("loader")
     username = _pending_login.get("username", "")
     if not L:
@@ -190,6 +198,7 @@ def ig_2fa(code: str) -> dict:
         USERNAME_FILE.write_text(username)
         _export_cookies_to_json(L)
         _pending_login = {"loader": None, "username": ""}
+        _ig_logged_out = False
         return {"success": True, "username": username}
     except Exception as e:
         _pending_login = {"loader": None, "username": ""}
@@ -197,9 +206,11 @@ def ig_2fa(code: str) -> dict:
 
 
 def ig_logout():
+    global _ig_logged_out
     SESSION_FILE.unlink(missing_ok=True)
     USERNAME_FILE.unlink(missing_ok=True)
     IG_COOKIES_FILE.unlink(missing_ok=True)
+    _ig_logged_out = True
 
 
 # ── Instagram: GraphQL API (primary) ──────────────────────
@@ -212,11 +223,15 @@ def _extract_ig_shortcode(url: str) -> str | None:
 
 def _get_ig_cookies_list() -> list[dict]:
     """Load IG cookies from file or IG_COOKIES_B64 env var."""
+    # File always takes priority (written by login, deleted by logout)
     if IG_COOKIES_FILE.exists():
         try:
             return json.loads(IG_COOKIES_FILE.read_text())
         except Exception:
             pass
+    # Skip env var if user explicitly logged out this session
+    if _ig_logged_out:
+        return []
     env = os.environ.get("IG_COOKIES_B64")
     if env:
         import base64
