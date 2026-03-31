@@ -142,12 +142,9 @@ def _export_cookies_to_json(L: instaloader.Instaloader):
 
 
 def ig_is_logged_in() -> bool:
-    if IG_COOKIES_FILE.exists():
-        try:
-            cookies = json.loads(IG_COOKIES_FILE.read_text())
-            return any(c.get("name") == "sessionid" and c.get("value") for c in cookies)
-        except Exception:
-            pass
+    cookies = _get_ig_cookies_list()
+    if cookies:
+        return any(c.get("name") == "sessionid" and c.get("value") for c in cookies)
     if not USERNAME_FILE.exists() or not SESSION_FILE.exists():
         return False
     try:
@@ -213,14 +210,26 @@ def _extract_ig_shortcode(url: str) -> str | None:
     return m.group(1) if m else None
 
 
-def _get_ig_cookies_dict() -> dict[str, str]:
+def _get_ig_cookies_list() -> list[dict]:
+    """Load IG cookies from file or IG_COOKIES_B64 env var."""
     if IG_COOKIES_FILE.exists():
         try:
-            cookies = json.loads(IG_COOKIES_FILE.read_text())
-            return {c["name"]: c["value"] for c in cookies if "instagram" in c.get("domain", "")}
+            return json.loads(IG_COOKIES_FILE.read_text())
         except Exception:
             pass
-    return {}
+    env = os.environ.get("IG_COOKIES_B64")
+    if env:
+        import base64
+        try:
+            return json.loads(base64.b64decode(env))
+        except Exception:
+            pass
+    return []
+
+
+def _get_ig_cookies_dict() -> dict[str, str]:
+    cookies = _get_ig_cookies_list()
+    return {c["name"]: c["value"] for c in cookies if "instagram" in c.get("domain", "")}
 
 
 def _shortcode_to_media_id(shortcode: str) -> str:
@@ -324,9 +333,10 @@ async def _fetch_ig_playwright(url: str) -> dict:
             viewport={"width": 1920, "height": 1080},
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
         )
-        if IG_COOKIES_FILE.exists():
+        ig_cookies = _get_ig_cookies_list()
+        if ig_cookies:
             try:
-                await context.add_cookies(json.loads(IG_COOKIES_FILE.read_text()))
+                await context.add_cookies(ig_cookies)
             except Exception:
                 pass
 
