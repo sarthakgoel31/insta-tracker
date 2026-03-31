@@ -262,10 +262,12 @@ def _fetch_ig_v1_api(shortcode: str) -> dict | None:
             headers=headers, cookies=cookies, timeout=15, follow_redirects=True,
         )
         if resp.status_code != 200:
+            logger.warning("IG v1 API returned %s for %s", resp.status_code, shortcode)
             return None
         data = resp.json()
         items = data.get("items", [])
         if not items:
+            logger.warning("IG v1 API returned no items for %s", shortcode)
             return None
 
         m = items[0]
