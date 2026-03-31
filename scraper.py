@@ -109,6 +109,27 @@ def detect_platform(url: str) -> str:
 # ── Instagram Auth ─────────────────────────────────────────
 
 
+def _restore_ig_session_from_env():
+    """On startup, restore session file from IG_SESSION_B64 env var if file doesn't exist."""
+    import base64
+    if SESSION_FILE.exists():
+        return
+    env = os.environ.get("IG_SESSION_B64")
+    if not env:
+        return
+    try:
+        DATA_DIR.mkdir(exist_ok=True)
+        SESSION_FILE.write_bytes(base64.b64decode(env))
+        if not USERNAME_FILE.exists():
+            USERNAME_FILE.write_text("testaccountforviews")
+        logger.info("Restored IG session from env var")
+    except Exception as e:
+        logger.warning("Failed to restore IG session from env: %s", e)
+
+
+_restore_ig_session_from_env()
+
+
 def _get_ig_loader() -> instaloader.Instaloader:
     L = instaloader.Instaloader()
     username = USERNAME_FILE.read_text().strip() if USERNAME_FILE.exists() else None
@@ -384,17 +405,42 @@ async def _fetch_ig_playwright(url: str) -> dict:
         return {"error": "Could not extract view count. Login may be required."}
 
 
+def _fetch_ig_instaloader(shortcode: str) -> dict | None:
+    """Use instaloader with saved session to fetch post data. Most reliable method."""
+    try:
+        L = _get_ig_loader()
+        if not L.context.is_logged_in:
+            return None
+        post = instaloader.Post.from_shortcode(L.context, shortcode)
+        return {
+            "views": post.video_view_count,
+            "likes": post.likes,
+            "comments": post.comments,
+            "posted_date": post.date_utc.strftime("%Y-%m-%d") if post.date_utc else None,
+            "title": (post.caption or "")[:100],
+            "account": post.owner_username or "",
+        }
+    except Exception as e:
+        logger.warning("Instaloader fetch failed for %s: %s", shortcode, e)
+        return None
+
+
 def fetch_instagram(url: str) -> dict:
     shortcode = _extract_ig_shortcode(url)
     if not shortcode:
         return {"error": "Invalid Instagram URL"}
 
-    # Strategy 1: v1 media info API (fast, exact play_count)
+    # Strategy 1: Instaloader with saved session (most reliable)
+    result = _fetch_ig_instaloader(shortcode)
+    if result and result.get("views") is not None:
+        return result
+
+    # Strategy 2: v1 media info API
     result = _fetch_ig_v1_api(shortcode)
     if result and result.get("views") is not None:
         return result
 
-    # Strategy 2: Playwright headless browser fallback
+    # Strategy 3: Playwright headless browser fallback
     try:
         return asyncio.run(_fetch_ig_playwright(url))
     except Exception as e:
