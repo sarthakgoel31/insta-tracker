@@ -213,6 +213,22 @@
   </div>
 </div>
 
+<div class="card" id="importCard" style="display:none">
+  <h2>Last Import</h2>
+  <div id="importSummary" style="margin-bottom:12px;font-weight:600"></div>
+  <div class="table-wrap">
+    <table id="importTable" style="width:100%"></table>
+  </div>
+</div>
+
+<div class="card" id="errorsCard" style="display:none">
+  <h2>Refresh Errors</h2>
+  <div id="errorsSummary" style="margin-bottom:12px;font-weight:600"></div>
+  <div class="table-wrap">
+    <table id="errorsTable" style="width:100%"></table>
+  </div>
+</div>
+
 <!-- Settings Modal -->
 <div class="modal-overlay" id="settingsModal" style="display:none" onclick="if(event.target===this)closeSettings()">
   <div class="modal">
@@ -301,6 +317,8 @@ let availableMonths = [];
 let activeTab = 'all';
 let cohortSummary = [];
 let pivotData = null;
+let lastImport = null; // { added: N, skipped: N, skipped_details: [] }
+let lastRefreshErrors = null; // [{ url, error }]
 
 // ── API ──
 
@@ -381,22 +399,37 @@ function render() {
   const contentCard = document.getElementById('contentCard');
   const monthlyCard = document.getElementById('monthlyCard');
   const summaryCard = document.getElementById('summaryCard');
+  const importCard = document.getElementById('importCard');
+  const errorsCard = document.getElementById('errorsCard');
+
+  // Hide all special cards first
+  summaryCard.style.display = 'none';
+  importCard.style.display = 'none';
+  errorsCard.style.display = 'none';
 
   if (activeTab === 'summary') {
     contentCard.style.display = 'none';
     monthlyCard.style.display = 'none';
     summaryCard.style.display = 'block';
     renderSummary();
+  } else if (activeTab === 'import') {
+    contentCard.style.display = 'none';
+    monthlyCard.style.display = 'none';
+    importCard.style.display = 'block';
+    renderImport();
+  } else if (activeTab === 'errors') {
+    contentCard.style.display = 'none';
+    monthlyCard.style.display = 'none';
+    errorsCard.style.display = 'block';
+    renderErrors();
   } else if (activeTab === 'all') {
     contentCard.style.display = 'block';
     monthlyCard.style.display = 'block';
-    summaryCard.style.display = 'none';
     renderMonthly();
   } else {
     // Specific month tab
     contentCard.style.display = 'block';
     monthlyCard.style.display = 'none';
-    summaryCard.style.display = 'none';
   }
 }
 
@@ -409,6 +442,16 @@ function renderTabs() {
 
   // "Summary" tab
   html += `<div class="tab${activeTab === 'summary' ? ' active' : ''}" onclick="switchTab('summary')">Summary</div>`;
+
+  // "Last Import" tab — only show if there's import data
+  if (lastImport) {
+    html += `<div class="tab${activeTab === 'import' ? ' active' : ''}" onclick="switchTab('import')">Last Import</div>`;
+  }
+
+  // "Errors" tab — only show if last refresh had errors
+  if (lastRefreshErrors && lastRefreshErrors.length) {
+    html += `<div class="tab${activeTab === 'errors' ? ' active' : ''}" onclick="switchTab('errors')" style="color:var(--danger)">Errors (${lastRefreshErrors.length})</div>`;
+  }
 
   // Month tabs
   availableMonths.forEach(m => {
@@ -890,8 +933,16 @@ async function refreshViews() {
 
           if (!p.running) {
             clearInterval(poll);
-            if (p.errors > 0) toast(`Done. ${p.errors} error(s) out of ${total}.`);
-            else toast('All views updated!');
+            if (p.errors > 0 && p.error_details && p.error_details.length) {
+              lastRefreshErrors = p.error_details;
+              toast(`Done. ${p.errors} error(s) — see Errors tab.`);
+              activeTab = 'errors';
+            } else if (p.errors > 0) {
+              toast(`Done. ${p.errors} error(s) out of ${total}.`);
+            } else {
+              lastRefreshErrors = null;
+              toast('All views updated!');
+            }
             resolve();
           }
         } catch { /* ignore poll errors */ }
@@ -982,24 +1033,38 @@ async function submitBulkAdd() {
   if (!urls.length) return;
   try {
     const res = await api('/api/reels/bulk', { method: 'POST', body: JSON.stringify({ urls }) });
-    // Show results view
-    document.getElementById('bulkInputView').style.display = 'none';
-    document.getElementById('bulkResultView').style.display = 'block';
-    const summary = document.getElementById('bulkResultSummary');
-    summary.innerHTML = `<span style="color:var(--success)">Added: ${res.added}</span>` +
-      (res.skipped ? ` &nbsp;|&nbsp; <span style="color:var(--danger)">Skipped: ${res.skipped}</span>` : '');
-    const list = document.getElementById('bulkSkippedList');
-    if (res.skipped_details && res.skipped_details.length) {
-      list.innerHTML = '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
-        '<tr style="border-bottom:1px solid var(--border);text-align:left"><th style="padding:6px">URL</th><th style="padding:6px">Reason</th></tr>' +
-        res.skipped_details.map(s =>
-          `<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px;word-break:break-all;max-width:350px">${s.url}</td><td style="padding:6px;color:var(--danger)">${s.reason}</td></tr>`
-        ).join('') + '</table>';
-    } else {
-      list.innerHTML = '<p style="color:var(--success)">All URLs added successfully!</p>';
-    }
+    lastImport = res;
+    closeBulkAdd();
+    activeTab = 'import';
     await loadAll();
   } catch (e) { toast('Error: ' + e.message); }
+}
+
+function renderImport() {
+  if (!lastImport) return;
+  const summary = document.getElementById('importSummary');
+  summary.innerHTML = `<span style="color:var(--success)">Added: ${lastImport.added}</span>` +
+    (lastImport.skipped ? ` &nbsp;|&nbsp; <span style="color:var(--danger)">Skipped: ${lastImport.skipped}</span>` : '');
+  const table = document.getElementById('importTable');
+  if (lastImport.skipped_details && lastImport.skipped_details.length) {
+    table.innerHTML = '<thead><tr><th style="text-align:left">URL</th><th style="text-align:left">Reason</th></tr></thead><tbody>' +
+      lastImport.skipped_details.map(s =>
+        `<tr><td style="word-break:break-all">${esc(s.url)}</td><td style="color:var(--danger)">${esc(s.reason)}</td></tr>`
+      ).join('') + '</tbody>';
+  } else {
+    table.innerHTML = '<tbody><tr><td style="color:var(--success);padding:20px 0">All URLs added successfully!</td></tr></tbody>';
+  }
+}
+
+function renderErrors() {
+  if (!lastRefreshErrors) return;
+  document.getElementById('errorsSummary').innerHTML =
+    `<span style="color:var(--danger)">${lastRefreshErrors.length} error(s) during last refresh</span>`;
+  const table = document.getElementById('errorsTable');
+  table.innerHTML = '<thead><tr><th style="text-align:left">URL</th><th style="text-align:left">Error</th></tr></thead><tbody>' +
+    lastRefreshErrors.map(e =>
+      `<tr><td style="word-break:break-all"><a href="${esc(e.url)}" target="_blank">${esc(e.url)}</a></td><td style="color:var(--danger)">${esc(e.error)}</td></tr>`
+    ).join('') + '</tbody>';
 }
 
 function openSettings() {
