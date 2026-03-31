@@ -409,6 +409,7 @@ _refresh_state = {
     "completed": 0,
     "errors": 0,
     "current_url": "",
+    "error_details": [],
 }
 _refresh_lock = threading.Lock()
 
@@ -423,9 +424,11 @@ def _process_single_reel(reel: dict) -> None:
     data = fetch_reel_data(url)
 
     if "error" in data:
+        logger.warning("Refresh error for %s: %s", url, data["error"])
         with _refresh_lock:
             _refresh_state["completed"] += 1
             _refresh_state["errors"] += 1
+            _refresh_state["error_details"].append({"url": url, "error": data["error"]})
         return
 
     conn = get_db()
@@ -566,6 +569,7 @@ def refresh_views():
         _refresh_state["total"] = len(reels)
         _refresh_state["completed"] = 0
         _refresh_state["errors"] = 0
+        _refresh_state["error_details"] = []
         _refresh_state["current_url"] = ""
 
     thread = threading.Thread(target=_refresh_worker, args=(list(reels),), daemon=True)
@@ -641,6 +645,7 @@ def _trigger_refresh() -> bool:
         _refresh_state["total"] = len(reels)
         _refresh_state["completed"] = 0
         _refresh_state["errors"] = 0
+        _refresh_state["error_details"] = []
         _refresh_state["current_url"] = ""
 
     thread = threading.Thread(target=_refresh_worker, args=(list(reels),), daemon=True)
