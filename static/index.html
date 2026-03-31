@@ -130,6 +130,21 @@
   .pivot-controls select { padding: 8px 12px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; outline: none; background: var(--card); }
   .pivot-controls select:focus { border-color: var(--accent); }
   .pivot-total-row td, .pivot-total-row th { font-weight: 700 !important; border-top: 2px solid var(--border); }
+
+  /* Refresh icon */
+  .refresh-icon { cursor: pointer; opacity: .4; font-size: 14px; margin-left: 4px; transition: all .2s; display: inline-block; }
+  .refresh-icon:hover { opacity: 1; transform: rotate(90deg); }
+  .refresh-icon.spinning { animation: spin .8s linear infinite; opacity: 1; }
+
+  /* Checkbox */
+  .row-check { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
+
+  /* Selection action bar */
+  .action-bar { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--text); color: #fff; padding: 12px 24px; border-radius: 12px; display: flex; gap: 12px; align-items: center; z-index: 100; box-shadow: 0 4px 20px rgba(0,0,0,.3); animation: fadeIn .2s; }
+  .action-bar .count { font-weight: 700; margin-right: 4px; }
+  .action-bar .btn { padding: 6px 14px; font-size: 13px; }
+  .action-bar .btn-ghost { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); }
+  .action-bar .btn-ghost:hover { background: rgba(255,255,255,.1); }
 </style>
 </head>
 <body>
@@ -285,6 +300,14 @@ https://www.facebook.com/reel/123456"></textarea>
   </div>
 </div>
 
+<!-- Selection Action Bar -->
+<div id="actionBar" class="action-bar" style="display:none">
+  <span><span class="count" id="selCount">0</span> selected</span>
+  <button class="btn btn-ghost" onclick="refreshSelected()">Refresh</button>
+  <button class="btn btn-danger" onclick="deleteSelected()">Delete</button>
+  <button class="btn btn-ghost" onclick="clearSelection()">Cancel</button>
+</div>
+
 <!-- Monthly Views History Modal -->
 <div class="modal-overlay" id="historyModal" style="display:none" onclick="if(event.target===this)closeHistory()">
   <div class="modal">
@@ -320,6 +343,7 @@ let cohortSummary = [];
 let pivotData = null;
 let lastImport = null; // { added: N, skipped: N, skipped_details: [] }
 let lastRefreshErrors = null; // [{ url, error }]
+let selectedIds = new Set();
 
 // ── API ──
 
@@ -560,7 +584,8 @@ function renderTable() {
 }
 
 function renderAllTable(head, body, empty, filtered) {
-  let th = '<tr><th></th><th>URL</th><th>Account</th><th>Title</th><th>Posted</th>';
+  const allChecked = filtered.length > 0 && filtered.every(r => selectedIds.has(r.id));
+  let th = `<tr><th><input type="checkbox" class="row-check" ${allChecked ? 'checked' : ''} onchange="toggleSelectAll(this.checked)"></th><th></th><th>URL</th><th>Account</th><th>Title</th><th>Posted</th>`;
   columns.forEach(c => {
     th += `<th class="col-header">${esc(c.name)}<button class="col-delete" onclick="deleteColumn(${c.id})" title="Remove column">&times;</button></th>`;
   });
@@ -595,7 +620,8 @@ function renderAllTable(head, body, empty, filtered) {
     if (short.length > 30) short = short.slice(0, 28) + '...';
 
     return `<tr>
-      <td>${platformBadge(r.platform)}</td>
+      <td><input type="checkbox" class="row-check" ${selectedIds.has(r.id) ? 'checked' : ''} onchange="toggleSelect(${r.id}, this.checked)"></td>
+      <td>${platformBadge(r.platform)}<span class="refresh-icon" id="ri-${r.id}" onclick="refreshOne(${r.id})" title="Refresh">&#8635;</span></td>
       <td class="url-cell"><a href="${esc(r.url)}" target="_blank">${esc(short)}</a></td>
       <td>${r.account ? esc(r.account) : '--'}</td>
       <td><span class="editable" onclick="editField(${r.id}, 'title', this)">${esc(r.title) || '--'}</span></td>
@@ -615,8 +641,9 @@ function renderMonthTable(head, body, empty, filtered) {
   const endMonth = activeTab > curMonth ? activeTab : curMonth;
   const monthCols = getMonthRange(activeTab, endMonth);
 
-  // Header: Platform | URL | Account | Title | Posted | [month columns...] | Total | Delete
-  let th = '<tr><th></th><th>URL</th><th>Account</th><th>Title</th><th>Posted</th>';
+  // Header
+  const allChecked = filtered.length > 0 && filtered.every(r => selectedIds.has(r.id));
+  let th = `<tr><th><input type="checkbox" class="row-check" ${allChecked ? 'checked' : ''} onchange="toggleSelectAll(this.checked)"></th><th></th><th>URL</th><th>Account</th><th>Title</th><th>Posted</th>`;
   monthCols.forEach((m, idx) => {
     const isLast = idx === monthCols.length - 1;
     const label = formatMonth(m);
@@ -665,7 +692,8 @@ function renderMonthTable(head, body, empty, filtered) {
     if (short.length > 30) short = short.slice(0, 28) + '...';
 
     return `<tr>
-      <td>${platformBadge(r.platform)}</td>
+      <td><input type="checkbox" class="row-check" ${selectedIds.has(r.id) ? 'checked' : ''} onchange="toggleSelect(${r.id}, this.checked)"></td>
+      <td>${platformBadge(r.platform)}<span class="refresh-icon" id="ri-${r.id}" onclick="refreshOne(${r.id})" title="Refresh">&#8635;</span></td>
       <td class="url-cell"><a href="${esc(r.url)}" target="_blank">${esc(short)}</a></td>
       <td>${r.account ? esc(r.account) : '--'}</td>
       <td><span class="editable" onclick="editField(${r.id}, 'title', this)">${esc(r.title) || '--'}</span></td>
@@ -1063,11 +1091,126 @@ function renderErrors() {
   document.getElementById('errorsSummary').innerHTML =
     `<span style="color:var(--danger)">${lastRefreshErrors.length} error(s) during last refresh</span>`;
   const table = document.getElementById('errorsTable');
-  table.innerHTML = '<thead><tr><th style="text-align:left">URL</th><th style="text-align:left">Error</th></tr></thead><tbody>' +
+  table.innerHTML = '<thead><tr><th style="text-align:left">URL</th><th style="text-align:left">Error</th><th></th></tr></thead><tbody>' +
     lastRefreshErrors.map(e =>
-      `<tr><td style="word-break:break-all"><a href="${esc(e.url)}" target="_blank">${esc(e.url)}</a></td><td style="color:var(--danger)">${esc(e.error)}</td></tr>`
+      `<tr><td style="word-break:break-all"><a href="${esc(e.url)}" target="_blank">${esc(e.url)}</a></td><td style="color:var(--danger)">${esc(e.error)}</td><td><button class="btn btn-danger" onclick="deleteReelByUrl('${esc(e.url)}')">Delete</button></td></tr>`
     ).join('') + '</tbody>';
 }
+
+// ── Selection & Bulk Actions ──
+
+function toggleSelect(id, checked) {
+  if (checked) selectedIds.add(id);
+  else selectedIds.delete(id);
+  updateActionBar();
+}
+
+function toggleSelectAll(checked) {
+  const visible = reels.map(r => r.id);
+  if (checked) visible.forEach(id => selectedIds.add(id));
+  else visible.forEach(id => selectedIds.delete(id));
+  render();
+  updateActionBar();
+}
+
+function clearSelection() {
+  selectedIds.clear();
+  render();
+  updateActionBar();
+}
+
+function updateActionBar() {
+  const bar = document.getElementById('actionBar');
+  const count = document.getElementById('selCount');
+  if (selectedIds.size > 0) {
+    bar.style.display = 'flex';
+    count.textContent = selectedIds.size;
+  } else {
+    bar.style.display = 'none';
+  }
+}
+
+async function refreshOne(id) {
+  const icon = document.getElementById('ri-' + id);
+  if (icon) icon.classList.add('spinning');
+  try {
+    await api(`/api/reels/${id}/refresh`, { method: 'POST' });
+    await loadAll();
+    toast('Refreshed!');
+  } catch (e) { toast('Error: ' + e.message); }
+  if (icon) icon.classList.remove('spinning');
+}
+
+async function refreshSelected() {
+  const ids = [...selectedIds];
+  if (!ids.length) return;
+  try {
+    await api('/api/reels/refresh-selected', { method: 'POST', body: JSON.stringify({ ids }) });
+    toast(`Refreshing ${ids.length} reels...`);
+    clearSelection();
+    // Poll for completion
+    const overlay = document.getElementById('loadingOverlay');
+    const text = document.getElementById('loadingText');
+    const bar = document.getElementById('progressBar');
+    const fill = document.getElementById('progressFill');
+    overlay.style.display = 'flex';
+    bar.style.display = 'block';
+    fill.style.width = '0%';
+    text.textContent = `Refreshing ${ids.length} selected reels...`;
+    await new Promise(resolve => {
+      const poll = setInterval(async () => {
+        try {
+          const p = await api('/api/refresh/progress');
+          const pct = p.total > 0 ? (p.completed / p.total * 100).toFixed(0) : 0;
+          fill.style.width = pct + '%';
+          text.textContent = `Fetching views (${p.completed}/${p.total})...`;
+          if (!p.running) {
+            clearInterval(poll);
+            if (p.errors > 0 && p.error_details && p.error_details.length) {
+              lastRefreshErrors = p.error_details;
+              toast(`Done. ${p.errors} error(s) — see Errors tab.`);
+            } else {
+              toast('All selected reels updated!');
+            }
+            resolve();
+          }
+        } catch {}
+      }, 2000);
+    });
+    overlay.style.display = 'none';
+    bar.style.display = 'none';
+    await loadAll();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+async function deleteSelected() {
+  const ids = [...selectedIds];
+  if (!ids.length) return;
+  if (!confirm(`Delete ${ids.length} reel(s)?`)) return;
+  try {
+    await api('/api/reels/bulk-delete', { method: 'POST', body: JSON.stringify({ ids }) });
+    clearSelection();
+    await loadAll();
+    toast(`Deleted ${ids.length} reel(s)`);
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+async function deleteReelByUrl(url) {
+  const reel = reels.find(r => r.url === url);
+  if (!reel) return toast('Reel not found');
+  try {
+    await api(`/api/reels/${reel.id}`, { method: 'DELETE' });
+    // Remove from errors list
+    if (lastRefreshErrors) {
+      lastRefreshErrors = lastRefreshErrors.filter(e => e.url !== url);
+      if (!lastRefreshErrors.length) lastRefreshErrors = null;
+    }
+    await loadAll();
+    toast('Deleted');
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+// ── Settings Modal ──
 
 function openSettings() {
   document.getElementById('settingsModal').style.display = 'flex';

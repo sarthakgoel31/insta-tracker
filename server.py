@@ -177,6 +177,10 @@ class SheetExport(BaseModel):
     sheet_url: str
 
 
+class BulkAction(BaseModel):
+    ids: list[int]
+
+
 class IGLoginReq(BaseModel):
     username: str
     password: str
@@ -380,6 +384,58 @@ def delete_reel(reel_id: int):
     conn.commit()
     conn.close()
     return {"ok": True}
+
+
+@app.post("/api/reels/bulk-delete")
+def bulk_delete_reels(data: BulkAction):
+    conn = get_db()
+    for rid in data.ids:
+        conn.execute("DELETE FROM reels WHERE id = ?", (rid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "deleted": len(data.ids)}
+
+
+@app.post("/api/reels/{reel_id}/refresh")
+def refresh_single_reel(reel_id: int):
+    """Refresh a single reel's views."""
+    conn = get_db()
+    row = conn.execute("SELECT url, posted_date FROM reels WHERE id = ?", (reel_id,)).fetchone()
+    if not row:
+        conn.close()
+        raise HTTPException(404, "Reel not found")
+    reel = {"id": reel_id, "url": row["url"], "posted_date": row["posted_date"]}
+    conn.close()
+    _process_single_reel(reel)
+    return {"ok": True}
+
+
+@app.post("/api/reels/refresh-selected")
+def refresh_selected_reels(data: BulkAction):
+    """Refresh selected reels in background."""
+    conn = get_db()
+    reel_rows = []
+    for rid in data.ids:
+        row = conn.execute("SELECT id, url, posted_date FROM reels WHERE id = ?", (rid,)).fetchone()
+        if row:
+            reel_rows.append(dict(row))
+    conn.close()
+    if not reel_rows:
+        raise HTTPException(400, "No valid reels")
+
+    with _refresh_lock:
+        if _refresh_state["running"]:
+            raise HTTPException(409, "Refresh already in progress")
+        _refresh_state["running"] = True
+        _refresh_state["total"] = len(reel_rows)
+        _refresh_state["completed"] = 0
+        _refresh_state["errors"] = 0
+        _refresh_state["error_details"] = []
+        _refresh_state["current_url"] = ""
+
+    thread = threading.Thread(target=_refresh_worker, args=(reel_rows,), daemon=True)
+    thread.start()
+    return {"started": True, "total": len(reel_rows)}
 
 
 @app.put("/api/reels/{reel_id}/monthly-views")
