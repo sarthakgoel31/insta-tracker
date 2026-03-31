@@ -11,7 +11,7 @@
     --green: #10b981; --red: #ef4444; --bar: #e0e7ff;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); padding: 24px; max-width: 1200px; margin: 0 auto; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); padding: 24px; max-width: 1400px; margin: 0 auto; }
 
   .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; flex-wrap: wrap; gap: 12px; }
   .header h1 { font-size: 24px; font-weight: 700; }
@@ -132,9 +132,10 @@
   .pivot-total-row td, .pivot-total-row th { font-weight: 700 !important; border-top: 2px solid var(--border); }
 
   /* Refresh icon */
-  .refresh-icon { cursor: pointer; opacity: .4; font-size: 14px; margin-left: 4px; transition: all .2s; display: inline-block; }
-  .refresh-icon:hover { opacity: 1; transform: rotate(90deg); }
-  .refresh-icon.spinning { animation: spin .8s linear infinite; opacity: 1; }
+  .platform-cell { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+  .refresh-icon { cursor: pointer; background: var(--green); color: #fff; border-radius: 4px; font-size: 12px; width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; transition: all .2s; line-height: 1; }
+  .refresh-icon:hover { background: #059669; transform: rotate(90deg); }
+  .refresh-icon.spinning { animation: spin .8s linear infinite; }
 
   /* Checkbox */
   .row-check { width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent); }
@@ -653,7 +654,7 @@ function renderAllTable(head, body, empty, filtered) {
 
     return `<tr>
       <td><input type="checkbox" class="row-check" ${selectedIds.has(r.id) ? 'checked' : ''} onchange="toggleSelect(${r.id}, this.checked)"></td>
-      <td>${platformBadge(r.platform)}<span class="refresh-icon" id="ri-${r.id}" onclick="refreshOne(${r.id})" title="Refresh">&#8635;</span></td>
+      <td><div class="platform-cell">${platformBadge(r.platform)}<span class="refresh-icon" id="ri-${r.id}" onclick="refreshOne(${r.id})" title="Refresh">&#8635;</span></div></td>
       <td class="url-cell"><a href="${esc(r.url)}" target="_blank">${esc(short)}</a></td>
       <td>${r.account ? esc(r.account) : '--'}</td>
       <td><span class="editable" onclick="editField(${r.id}, 'title', this)">${esc(r.title) || '--'}</span></td>
@@ -725,7 +726,7 @@ function renderMonthTable(head, body, empty, filtered) {
 
     return `<tr>
       <td><input type="checkbox" class="row-check" ${selectedIds.has(r.id) ? 'checked' : ''} onchange="toggleSelect(${r.id}, this.checked)"></td>
-      <td>${platformBadge(r.platform)}<span class="refresh-icon" id="ri-${r.id}" onclick="refreshOne(${r.id})" title="Refresh">&#8635;</span></td>
+      <td><div class="platform-cell">${platformBadge(r.platform)}<span class="refresh-icon" id="ri-${r.id}" onclick="refreshOne(${r.id})" title="Refresh">&#8635;</span></div></td>
       <td class="url-cell"><a href="${esc(r.url)}" target="_blank">${esc(short)}</a></td>
       <td>${r.account ? esc(r.account) : '--'}</td>
       <td><span class="editable" onclick="editField(${r.id}, 'title', this)">${esc(r.title) || '--'}</span></td>
