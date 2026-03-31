@@ -294,23 +294,23 @@ def add_reel(reel: ReelCreate):
 @app.post("/api/reels/bulk")
 def add_reels_bulk(data: BulkAdd):
     conn = get_db()
-    added, skipped = 0, 0
+    added, skipped_list = 0, []
     for url in data.urls:
         url = url.strip()
         if not url:
             continue
         platform = detect_platform(url)
         if platform == "unknown":
-            skipped += 1
+            skipped_list.append({"url": url, "reason": "Unsupported platform"})
             continue
         try:
             conn.execute("INSERT INTO reels (url, platform) VALUES (?, ?)", (url, platform))
             added += 1
         except Exception:
-            skipped += 1
+            skipped_list.append({"url": url, "reason": "Duplicate URL"})
     conn.commit()
     conn.close()
-    return {"added": added, "skipped": skipped}
+    return {"added": added, "skipped": len(skipped_list), "skipped_details": skipped_list}
 
 
 @app.put("/api/reels/{reel_id}")
