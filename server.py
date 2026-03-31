@@ -432,6 +432,9 @@ def refresh_selected_reels(data: BulkAction):
         _refresh_state["errors"] = 0
         _refresh_state["error_details"] = []
         _refresh_state["current_url"] = ""
+        _refresh_state["cookie_auto_refreshed"] = None
+        _refresh_state["cookie_retry_recovered"] = 0
+        _refresh_state["cookie_refresh_error"] = ""
 
     thread = threading.Thread(target=_refresh_worker, args=(reel_rows,), daemon=True)
     thread.start()
@@ -610,35 +613,73 @@ def _process_fb(reels: list) -> None:
             time.sleep(DELAY_FB)
 
 
-def _refresh_worker(reel_rows: list):
-    """Runs in background thread. Splits reels by platform and processes in parallel."""
-    # Group reels by platform
-    by_platform: dict[str, list] = defaultdict(list)
-    for reel in reel_rows:
-        by_platform[reel["platform"]].append(reel)
-
+def _run_platform_threads(by_platform: dict[str, list]):
+    """Launch one thread per platform and wait for all to finish."""
     platform_handlers = {
         "instagram": _process_ig,
         "youtube": _process_youtube,
         "facebook": _process_fb,
     }
-
-    # Launch one thread per platform that has reels
     threads: list[threading.Thread] = []
     for platform, reels in by_platform.items():
-        handler = platform_handlers.get(platform)
-        if not handler:
-            # Unknown platform — process sequentially with default delay
-            handler = _process_ig
+        handler = platform_handlers.get(platform, _process_ig)
         t = threading.Thread(target=handler, args=(reels,), daemon=True)
         t.name = f"refresh-{platform}"
         threads.append(t)
         t.start()
         logger.info("Refresh: started %s thread for %d reels", platform, len(reels))
-
-    # Wait for all platform threads to finish
     for t in threads:
         t.join()
+
+
+def _refresh_worker(reel_rows: list):
+    """Runs in background thread. Splits reels by platform and processes in parallel.
+    After completion, detects IG cookie expiry and auto-heals."""
+    from scraper import ig_auto_refresh_cookies
+
+    # Group reels by platform
+    by_platform: dict[str, list] = defaultdict(list)
+    for reel in reel_rows:
+        by_platform[reel["platform"]].append(reel)
+
+    _run_platform_threads(by_platform)
+
+    # Check for IG cookie expiry pattern: many IG errors with "Login may be required"
+    with _refresh_lock:
+        ig_errors = [e for e in _refresh_state["error_details"]
+                     if "instagram.com" in e.get("url", "") and "Login" in e.get("error", "")]
+
+    if len(ig_errors) >= 3 and "instagram" in by_platform:
+        logger.info("Detected %d IG auth errors — attempting auto cookie refresh", len(ig_errors))
+        result = ig_auto_refresh_cookies()
+
+        if result.get("success"):
+            logger.info("IG cookies refreshed — re-running %d failed IG reels", len(ig_errors))
+            # Re-run only the failed IG reels
+            failed_urls = {e["url"] for e in ig_errors}
+            retry_reels = [r for r in by_platform["instagram"] if r["url"] in failed_urls]
+
+            with _refresh_lock:
+                # Remove old IG errors, update totals for retry
+                _refresh_state["error_details"] = [
+                    e for e in _refresh_state["error_details"] if e not in ig_errors]
+                _refresh_state["errors"] -= len(ig_errors)
+                _refresh_state["completed"] -= len(ig_errors)
+                _refresh_state["total"] = _refresh_state["total"]  # keep same total
+                _refresh_state["cookie_auto_refreshed"] = True
+
+            _process_ig(retry_reels)
+
+            with _refresh_lock:
+                # Count how many still failed after retry
+                new_ig_errors = [e for e in _refresh_state["error_details"]
+                                 if "instagram.com" in e.get("url", "")]
+                _refresh_state["cookie_retry_recovered"] = len(ig_errors) - len(new_ig_errors)
+        else:
+            logger.warning("IG auto cookie refresh failed: %s", result.get("error"))
+            with _refresh_lock:
+                _refresh_state["cookie_auto_refreshed"] = False
+                _refresh_state["cookie_refresh_error"] = result.get("error", "Unknown")
 
     with _refresh_lock:
         _refresh_state["running"] = False
@@ -665,6 +706,9 @@ def refresh_views():
         _refresh_state["errors"] = 0
         _refresh_state["error_details"] = []
         _refresh_state["current_url"] = ""
+        _refresh_state["cookie_auto_refreshed"] = None
+        _refresh_state["cookie_retry_recovered"] = 0
+        _refresh_state["cookie_refresh_error"] = ""
 
     thread = threading.Thread(target=_refresh_worker, args=(list(reels),), daemon=True)
     thread.start()
@@ -741,6 +785,9 @@ def _trigger_refresh() -> bool:
         _refresh_state["errors"] = 0
         _refresh_state["error_details"] = []
         _refresh_state["current_url"] = ""
+        _refresh_state["cookie_auto_refreshed"] = None
+        _refresh_state["cookie_retry_recovered"] = 0
+        _refresh_state["cookie_refresh_error"] = ""
 
     thread = threading.Thread(target=_refresh_worker, args=(list(reels),), daemon=True)
     thread.start()

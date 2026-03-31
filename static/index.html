@@ -110,6 +110,9 @@
   /* Banner */
   .banner { padding: 12px 20px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; display: flex; align-items: center; gap: 8px; }
   .banner-warn { background: #fef3c7; border: 1px solid #f59e0b; color: #92400e; }
+  .banner-success { background: #d1fae5; border: 1px solid #10b981; color: #065f46; }
+  .banner-error { background: #fee2e2; border: 1px solid #ef4444; color: #991b1b; }
+  .banner-close { background: none; border: none; font-size: 18px; cursor: pointer; margin-left: auto; color: inherit; padding: 0 4px; }
   .banner a { color: inherit; font-weight: 600; cursor: pointer; text-decoration: underline; }
 
   /* Tab bar */
@@ -149,6 +152,8 @@
 </style>
 </head>
 <body>
+
+<div id="cookieBanner" class="banner" style="display:none"></div>
 
 <div id="loginBanner" class="banner banner-warn" style="display:none">
   Instagram not connected. <a onclick="openSettings()">Open Settings</a> to log in.
@@ -996,6 +1001,8 @@ async function refreshViews() {
 
           if (!p.running) {
             clearInterval(poll);
+            // Show cookie auto-refresh banner
+            showCookieBanner(p);
             if (p.errors > 0 && p.error_details && p.error_details.length) {
               lastRefreshErrors = p.error_details;
               toast(`Done. ${p.errors} error(s) — see Errors tab.`);
@@ -1404,6 +1411,23 @@ async function igLogout() {
 function fmt(n) { return n != null ? n.toLocaleString() : '--'; }
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function formatMonth(ym) { const [y, m] = ym.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m - 1] + ' ' + y; }
+
+function showCookieBanner(p) {
+  const banner = document.getElementById('cookieBanner');
+  if (p.cookie_auto_refreshed === true) {
+    const recovered = p.cookie_retry_recovered || 0;
+    banner.className = 'banner banner-success';
+    banner.innerHTML = `<span>Instagram cookies expired — auto-refreshed and recovered <strong>${recovered}</strong> reel(s). No action needed.</span><button class="banner-close" onclick="this.parentElement.style.display='none'">&times;</button>`;
+    banner.style.display = 'flex';
+  } else if (p.cookie_auto_refreshed === false) {
+    const err = p.cookie_refresh_error || 'Unknown error';
+    banner.className = 'banner banner-error';
+    banner.innerHTML = `<span>Instagram cookies expired — auto-refresh failed: ${esc(err)}. Set <strong>IG_USERNAME</strong> + <strong>IG_PASSWORD</strong> env vars on Railway, or re-login manually via Settings.</span><button class="banner-close" onclick="this.parentElement.style.display='none'">&times;</button>`;
+    banner.style.display = 'flex';
+  } else {
+    banner.style.display = 'none';
+  }
+}
 
 function toast(msg) {
   const el = document.createElement('div');
