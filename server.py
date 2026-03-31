@@ -929,10 +929,15 @@ def distribution_analytics():
 
 
 @app.get("/api/analytics/pivot")
-def pivot_analytics(group_by: str = "account"):
-    """Pivot table. account/platform: rows=labels, cols=months. month: rows=months, cols=M0/M1/M2."""
+def pivot_analytics(group_by: str = "account", ids: str | None = None):
+    """Pivot table. account/platform: rows=labels, cols=months. month: rows=months, cols=M0/M1/M2.
+    Optional ids param: comma-separated reel IDs to filter on."""
     if group_by not in ("account", "platform", "month"):
         raise HTTPException(400, "group_by must be 'account', 'platform', or 'month'")
+
+    id_filter = None
+    if ids:
+        id_filter = [int(x) for x in ids.split(",") if x.strip().isdigit()]
 
     conn = get_db()
     current_month = datetime.now(timezone.utc).strftime("%Y-%m")
@@ -940,7 +945,11 @@ def pivot_analytics(group_by: str = "account"):
     if group_by == "month":
         # Cohort view: rows = calendar months, columns = M0, M1, M2...
         # M0 = views from reels posted that month, M1 = views from reels posted previous month, etc.
-        reels = conn.execute("SELECT id, posted_date FROM reels WHERE posted_date IS NOT NULL").fetchall()
+        if id_filter:
+            placeholders = ",".join("?" * len(id_filter))
+            reels = conn.execute(f"SELECT id, posted_date FROM reels WHERE posted_date IS NOT NULL AND id IN ({placeholders})", id_filter).fetchall()
+        else:
+            reels = conn.execute("SELECT id, posted_date FROM reels WHERE posted_date IS NOT NULL").fetchall()
         # { calendar_month: { age: total_views } }
         month_cohorts: dict[str, dict[int, int]] = defaultdict(lambda: defaultdict(int))
 
@@ -1003,7 +1012,11 @@ def pivot_analytics(group_by: str = "account"):
         }
 
     # account / platform grouping
-    reels = conn.execute("SELECT id, account, platform FROM reels").fetchall()
+    if id_filter:
+        placeholders = ",".join("?" * len(id_filter))
+        reels = conn.execute(f"SELECT id, account, platform FROM reels WHERE id IN ({placeholders})", id_filter).fetchall()
+    else:
+        reels = conn.execute("SELECT id, account, platform FROM reels").fetchall()
     row_data: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
 
     for reel in reels:

@@ -245,6 +245,23 @@
   </div>
 </div>
 
+<div class="card" id="selSummaryCard" style="display:none">
+  <h2>Selected Summary</h2>
+  <div class="pivot-controls">
+    <div>
+      <label for="selPivotGroupBy">Group by</label><br>
+      <select id="selPivotGroupBy" onchange="loadSelPivot()">
+        <option value="account">Account</option>
+        <option value="platform">Platform</option>
+        <option value="month">Month</option>
+      </select>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table id="selSummaryTable" style="width:100%"></table>
+  </div>
+</div>
+
 <!-- Settings Modal -->
 <div class="modal-overlay" id="settingsModal" style="display:none" onclick="if(event.target===this)closeSettings()">
   <div class="modal">
@@ -304,6 +321,7 @@ https://www.facebook.com/reel/123456"></textarea>
 <div id="actionBar" class="action-bar" style="display:none">
   <span><span class="count" id="selCount">0</span> selected</span>
   <button class="btn btn-ghost" onclick="refreshSelected()">Refresh</button>
+  <button class="btn btn-ghost" onclick="summarizeSelected()">Summarize</button>
   <button class="btn btn-danger" onclick="deleteSelected()">Delete</button>
   <button class="btn btn-ghost" onclick="clearSelection()">Cancel</button>
 </div>
@@ -344,6 +362,8 @@ let pivotData = null;
 let lastImport = null; // { added: N, skipped: N, skipped_details: [] }
 let lastRefreshErrors = null; // [{ url, error }]
 let selectedIds = new Set();
+let selPivotData = null; // pivot data for selected reels
+let selPivotIds = []; // which IDs the current selPivot is for
 
 // ── API ──
 
@@ -367,7 +387,7 @@ async function loadAll() {
   try {
     // Build the reels endpoint based on active tab
     let reelsUrl = '/api/reels';
-    const specialTabs = ['all', 'summary', 'import', 'errors'];
+    const specialTabs = ['all', 'summary', 'import', 'errors', 'sel-summary'];
     if (!specialTabs.includes(activeTab)) {
       reelsUrl = '/api/reels?month=' + encodeURIComponent(activeTab);
     }
@@ -427,11 +447,13 @@ function render() {
   const summaryCard = document.getElementById('summaryCard');
   const importCard = document.getElementById('importCard');
   const errorsCard = document.getElementById('errorsCard');
+  const selSummaryCard = document.getElementById('selSummaryCard');
 
   // Hide all special cards first
   summaryCard.style.display = 'none';
   importCard.style.display = 'none';
   errorsCard.style.display = 'none';
+  selSummaryCard.style.display = 'none';
 
   if (activeTab === 'summary') {
     contentCard.style.display = 'none';
@@ -448,6 +470,11 @@ function render() {
     monthlyCard.style.display = 'none';
     errorsCard.style.display = 'block';
     renderErrors();
+  } else if (activeTab === 'sel-summary') {
+    contentCard.style.display = 'none';
+    monthlyCard.style.display = 'none';
+    selSummaryCard.style.display = 'block';
+    renderSelSummary();
   } else if (activeTab === 'all') {
     contentCard.style.display = 'block';
     monthlyCard.style.display = 'block';
@@ -477,6 +504,11 @@ function renderTabs() {
   // "Errors" tab — only show if last refresh had errors
   if (lastRefreshErrors && lastRefreshErrors.length) {
     html += `<div class="tab${activeTab === 'errors' ? ' active' : ''}" onclick="switchTab('errors')" style="color:var(--danger)">Errors (${lastRefreshErrors.length})</div>`;
+  }
+
+  // "Selected Summary" tab — only show if data exists
+  if (selPivotData) {
+    html += `<div class="tab${activeTab === 'sel-summary' ? ' active' : ''}" onclick="switchTab('sel-summary')">Selected Summary (${selPivotIds.length})</div>`;
   }
 
   // Month tabs
@@ -1193,6 +1225,60 @@ async function deleteSelected() {
     await loadAll();
     toast(`Deleted ${ids.length} reel(s)`);
   } catch (e) { toast('Error: ' + e.message); }
+}
+
+async function summarizeSelected() {
+  const ids = [...selectedIds];
+  if (!ids.length) return;
+  selPivotIds = ids;
+  const groupBy = document.getElementById('selPivotGroupBy')?.value || 'account';
+  try {
+    selPivotData = await api('/api/analytics/pivot?group_by=' + groupBy + '&ids=' + ids.join(','));
+    activeTab = 'sel-summary';
+    render();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+async function loadSelPivot() {
+  if (!selPivotIds.length) return;
+  const groupBy = document.getElementById('selPivotGroupBy').value;
+  try {
+    selPivotData = await api('/api/analytics/pivot?group_by=' + groupBy + '&ids=' + selPivotIds.join(','));
+    renderSelSummary();
+  } catch (e) { toast('Error: ' + e.message); }
+}
+
+function renderSelSummary() {
+  const table = document.getElementById('selSummaryTable');
+  if (!selPivotData || !selPivotData.rows || !selPivotData.rows.length) {
+    table.innerHTML = '<tr><td class="empty">No data for selected reels.</td></tr>';
+    return;
+  }
+  const cols = selPivotData.months || [];
+  const rows = selPivotData.rows || [];
+  const totals = selPivotData.totals || {};
+  const groupBy = document.getElementById('selPivotGroupBy')?.value || 'account';
+  const groupLabel = groupBy === 'month' ? 'Month' : (groupBy === 'platform' ? 'Platform' : 'Account');
+  const isMonthGroup = groupBy === 'month';
+
+  let html = `<thead><tr><th>${esc(groupLabel)}</th>`;
+  cols.forEach(c => { html += `<th class="num">${isMonthGroup ? esc(c) : formatMonth(c)}</th>`; });
+  html += '<th class="num">Total</th></tr></thead><tbody>';
+  rows.forEach(row => {
+    const rowLabel = isMonthGroup ? formatMonth(row.label) : row.label;
+    html += `<tr><td><strong>${esc(rowLabel)}</strong></td>`;
+    cols.forEach(c => {
+      const val = row.months && row.months[c] ? row.months[c] : 0;
+      html += `<td class="num">${val > 0 ? fmt(val) : '--'}</td>`;
+    });
+    html += `<td class="num" style="font-weight:600">${row.total ? fmt(row.total) : '--'}</td></tr>`;
+  });
+  const totalCols = totals.months || {};
+  html += `<tr class="pivot-total-row"><td><strong>Total</strong></td>`;
+  cols.forEach(c => { html += `<td class="num"><strong>${totalCols[c] ? fmt(totalCols[c]) : '--'}</strong></td>`; });
+  html += `<td class="num"><strong>${totals.total ? fmt(totals.total) : '--'}</strong></td></tr>`;
+  html += '</tbody>';
+  table.innerHTML = html;
 }
 
 async function deleteReelByUrl(url) {
