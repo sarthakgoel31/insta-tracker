@@ -513,22 +513,22 @@ def fetch_instagram(url: str) -> dict:
     if not shortcode:
         return {"error": "Invalid Instagram URL"}
 
-    # Strategy 1: Embed page (no auth, works from any IP)
-    result = _fetch_ig_embed(shortcode)
-    if result and result.get("views") is not None:
-        return result
-
-    # Strategy 2: Instaloader with saved session
-    result = _fetch_ig_instaloader(shortcode)
-    if result and result.get("views") is not None:
-        return result
-
-    # Strategy 2: v1 media info API
+    # Strategy 1: v1 media info API (play_count = what IG app shows)
     result = _fetch_ig_v1_api(shortcode)
     if result and result.get("views") is not None:
         return result
 
-    # Strategy 3: Playwright headless browser fallback
+    # Strategy 2: Embed page (no auth, works from any IP — uses video_view_count, less accurate)
+    result = _fetch_ig_embed(shortcode)
+    if result and result.get("views") is not None:
+        return result
+
+    # Strategy 3: Instaloader with saved session
+    result = _fetch_ig_instaloader(shortcode)
+    if result and result.get("views") is not None:
+        return result
+
+    # Strategy 4: Playwright headless browser fallback
     try:
         return asyncio.run(_fetch_ig_playwright(url))
     except Exception as e:
