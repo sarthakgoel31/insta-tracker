@@ -252,11 +252,18 @@
       <button class="modal-close" onclick="closeBulkAdd()">&times;</button>
     </div>
     <div class="modal-body">
-      <p class="status-info" style="margin-bottom:12px">Paste one URL per line (Instagram, YouTube, Facebook)</p>
-      <textarea id="bulkUrls" rows="10" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:monospace;resize:vertical;outline:none" placeholder="https://www.instagram.com/reel/ABC123/
+      <div id="bulkInputView">
+        <p class="status-info" style="margin-bottom:12px">Paste one URL per line (Instagram, YouTube, Facebook)</p>
+        <textarea id="bulkUrls" rows="10" style="width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:13px;font-family:monospace;resize:vertical;outline:none" placeholder="https://www.instagram.com/reel/ABC123/
 https://www.youtube.com/shorts/XYZ789
 https://www.facebook.com/reel/123456"></textarea>
-      <button class="btn btn-primary" style="margin-top:12px;width:100%" onclick="submitBulkAdd()">Add All</button>
+        <button class="btn btn-primary" style="margin-top:12px;width:100%" onclick="submitBulkAdd()">Add All</button>
+      </div>
+      <div id="bulkResultView" style="display:none">
+        <div id="bulkResultSummary" style="margin-bottom:12px;font-weight:600"></div>
+        <div id="bulkSkippedList" style="max-height:300px;overflow-y:auto"></div>
+        <button class="btn btn-outline" style="margin-top:12px;width:100%" onclick="resetBulkModal()">Add More</button>
+      </div>
     </div>
   </div>
 </div>
@@ -956,8 +963,16 @@ async function deleteColumn(id) {
 
 // ── Settings Modal ──
 
-function openBulkAdd() { document.getElementById('bulkModal').style.display = 'flex'; }
+function openBulkAdd() {
+  resetBulkModal();
+  document.getElementById('bulkModal').style.display = 'flex';
+}
 function closeBulkAdd() { document.getElementById('bulkModal').style.display = 'none'; }
+function resetBulkModal() {
+  document.getElementById('bulkInputView').style.display = 'block';
+  document.getElementById('bulkResultView').style.display = 'none';
+  document.getElementById('bulkUrls').value = '';
+}
 
 async function submitBulkAdd() {
   const text = document.getElementById('bulkUrls').value.trim();
@@ -966,9 +981,22 @@ async function submitBulkAdd() {
   if (!urls.length) return;
   try {
     const res = await api('/api/reels/bulk', { method: 'POST', body: JSON.stringify({ urls }) });
-    toast(`Added ${res.added}, skipped ${res.skipped}`);
-    document.getElementById('bulkUrls').value = '';
-    closeBulkAdd();
+    // Show results view
+    document.getElementById('bulkInputView').style.display = 'none';
+    document.getElementById('bulkResultView').style.display = 'block';
+    const summary = document.getElementById('bulkResultSummary');
+    summary.innerHTML = `<span style="color:var(--success)">Added: ${res.added}</span>` +
+      (res.skipped ? ` &nbsp;|&nbsp; <span style="color:var(--danger)">Skipped: ${res.skipped}</span>` : '');
+    const list = document.getElementById('bulkSkippedList');
+    if (res.skipped_details && res.skipped_details.length) {
+      list.innerHTML = '<table style="width:100%;font-size:13px;border-collapse:collapse">' +
+        '<tr style="border-bottom:1px solid var(--border);text-align:left"><th style="padding:6px">URL</th><th style="padding:6px">Reason</th></tr>' +
+        res.skipped_details.map(s =>
+          `<tr style="border-bottom:1px solid var(--border)"><td style="padding:6px;word-break:break-all;max-width:350px">${s.url}</td><td style="padding:6px;color:var(--danger)">${s.reason}</td></tr>`
+        ).join('') + '</table>';
+    } else {
+      list.innerHTML = '<p style="color:var(--success)">All URLs added successfully!</p>';
+    }
     await loadAll();
   } catch (e) { toast('Error: ' + e.message); }
 }
