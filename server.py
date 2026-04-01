@@ -556,6 +556,41 @@ def _process_single_reel(reel: dict) -> None:
     current_month = datetime.now(timezone.utc).strftime("%Y-%m")
     total_views = data.get("views")
     if total_views is not None:
+        # ── Month-end backfill: if previous month has no entry, create one from last snapshot ──
+        prev_month_dt = datetime.now(timezone.utc).replace(day=1) - timedelta(days=1)
+        prev_month = prev_month_dt.strftime("%Y-%m")
+        prev_entry = conn.execute(
+            "SELECT id FROM monthly_views WHERE reel_id = ? AND month = ?",
+            (reel_id, prev_month),
+        ).fetchone()
+        if not prev_entry:
+            # Find the last snapshot taken during the previous month
+            prev_month_end = prev_month_dt.strftime("%Y-%m-%d 23:59:59")
+            prev_month_start = prev_month + "-01 00:00:00"
+            last_prev_snap = conn.execute(
+                "SELECT views FROM snapshots WHERE reel_id = ? "
+                "AND fetched_at >= ? AND fetched_at <= ? "
+                "ORDER BY fetched_at DESC LIMIT 1",
+                (reel_id, prev_month_start, prev_month_end),
+            ).fetchone()
+            if last_prev_snap and last_prev_snap["views"] is not None:
+                # Sum of all months before the previous month
+                older_sum_row = conn.execute(
+                    "SELECT COALESCE(SUM(cumulative_views), 0) AS s FROM monthly_views "
+                    "WHERE reel_id = ? AND month < ?",
+                    (reel_id, prev_month),
+                ).fetchone()
+                older_sum = older_sum_row["s"]
+                prev_month_views = max(last_prev_snap["views"] - older_sum, 0)
+                if prev_month_views > 0:
+                    conn.execute(
+                        "INSERT INTO monthly_views (reel_id, month, cumulative_views, is_manual) "
+                        "VALUES (?, ?, ?, 0) ON CONFLICT(reel_id, month) DO NOTHING",
+                        (reel_id, prev_month, prev_month_views),
+                    )
+                    logger.debug("Backfilled %s views for reel %d month %s", prev_month_views, reel_id, prev_month)
+
+        # ── Current month calculation ──
         existing = conn.execute(
             "SELECT is_manual FROM monthly_views WHERE reel_id = ? AND month = ?",
             (reel_id, current_month),
@@ -841,6 +876,41 @@ def reel_snapshots(reel_id: int):
     ).fetchall()
     conn.close()
     return {"snapshots": [dict(r) for r in rows]}
+
+
+@app.post("/api/admin/backfill-march")
+def backfill_march():
+    """One-time migration: for reels with no March 2026 entry but April entry,
+    move April views to March (since these reels were tracked in March but first
+    snapshot was taken after month rollover)."""
+    conn = get_db()
+    reels = conn.execute("SELECT id, posted_date FROM reels").fetchall()
+    moved = 0
+    for r in reels:
+        # Check if has April entry but no March
+        apr = conn.execute(
+            "SELECT cumulative_views, is_manual FROM monthly_views WHERE reel_id = ? AND month = '2026-04'",
+            (r["id"],),
+        ).fetchone()
+        mar = conn.execute(
+            "SELECT id FROM monthly_views WHERE reel_id = ? AND month = '2026-03'",
+            (r["id"],),
+        ).fetchone()
+        if apr and not mar and not apr["is_manual"]:
+            # Move April views to March, reset April
+            conn.execute(
+                "INSERT INTO monthly_views (reel_id, month, cumulative_views, is_manual) VALUES (?, '2026-03', ?, 0)",
+                (r["id"], apr["cumulative_views"]),
+            )
+            conn.execute(
+                "UPDATE monthly_views SET cumulative_views = 0, updated_at = datetime('now') "
+                "WHERE reel_id = ? AND month = '2026-04' AND is_manual = 0",
+                (r["id"],),
+            )
+            moved += 1
+    conn.commit()
+    conn.close()
+    return {"moved": moved, "message": f"Moved {moved} reels' views from April to March"}
 
 
 # ── Analytics ───────────────────────────────────────────────
