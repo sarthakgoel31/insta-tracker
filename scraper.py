@@ -794,7 +794,11 @@ async def _fetch_fb_playwright(url: str) -> dict:
                             try:
                                 date_str = dm.group(0)
                                 parsed = datetime.strptime(date_str, "%b %d")
-                                result["posted_date"] = parsed.replace(year=datetime.now().year).strftime("%Y-%m-%d")
+                                now = datetime.now()
+                                candidate = parsed.replace(year=now.year)
+                                if candidate > now:
+                                    candidate = candidate.replace(year=now.year - 1)
+                                result["posted_date"] = candidate.strftime("%Y-%m-%d")
                             except Exception:
                                 pass
                             break

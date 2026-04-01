@@ -627,7 +627,7 @@ function renderAllTable(head, body, empty, filtered) {
   columns.forEach(c => {
     th += `<th class="col-header">${esc(c.name)}<button class="col-delete" onclick="deleteColumn(${c.id})" title="Remove column">&times;</button></th>`;
   });
-  th += '<th class="num">Views</th><th class="num">Comments</th><th class="num">Growth</th>';
+  th += '<th class="num">Views</th><th class="num">Comments</th>';
   th += '<th></th></tr>';
   head.innerHTML = th;
 
@@ -639,14 +639,6 @@ function renderAllTable(head, body, empty, filtered) {
   empty.style.display = 'none';
 
   body.innerHTML = filtered.map(r => {
-    const g = r.growth;
-    let growthHtml = '<span class="growth-zero">--</span>';
-    if (g !== null && g !== undefined) {
-      if (g > 0) growthHtml = `<span class="growth-pos">+${fmt(g)}</span>`;
-      else if (g < 0) growthHtml = `<span class="growth-neg">${fmt(g)}</span>`;
-      else growthHtml = '<span class="growth-zero">0</span>';
-    }
-
     let customCells = columns.map(c => {
       const val = (r.custom_fields || {})[c.name] || '';
       return `<td><span class="editable" onclick="editCustom(${r.id}, '${esc(c.name)}', this)">${esc(val) || '--'}</span></td>`;
@@ -667,7 +659,6 @@ function renderAllTable(head, body, empty, filtered) {
       ${customCells}
       <td class="num">${r.views !== null ? fmt(r.views) : '--'}</td>
       <td class="num">${r.comments !== null ? fmt(r.comments) : '--'}</td>
-      <td class="num">${growthHtml}</td>
       <td><button class="btn btn-danger" onclick="deleteReel(${r.id})">Delete</button></td>
     </tr>`;
   }).join('');
