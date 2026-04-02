@@ -767,6 +767,15 @@ def refresh_progress():
         return dict(_refresh_state)
 
 
+@app.post("/api/refresh/reset")
+def refresh_reset():
+    """Force-reset a stuck refresh state."""
+    with _refresh_lock:
+        _refresh_state["running"] = False
+        _refresh_state["current_url"] = ""
+    return {"ok": True}
+
+
 # ── Daily Cron Refresh (8:00 AM IST / 2:30 AM UTC) ──────────
 
 CRON_HOUR_UTC = 2
