@@ -1448,15 +1448,14 @@ async function updateLastRefreshed() {
 }
 
 function toIST(dateStr) {
-  // dateStr could be "2026-04-02 12:30:00" (SQLite local) or "2026-04-02T12:30:00Z" (UTC)
-  const isUTC = dateStr.includes('T') || dateStr.includes('Z');
-  const d = new Date(isUTC ? dateStr : dateStr + 'Z');
-  const ist = new Date(d.getTime() + (isUTC ? 5.5 * 60 * 60 * 1000 : 0));
-  const dd = String(ist.getDate()).padStart(2, '0');
-  const mm = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ist.getMonth()];
-  const hh = String(ist.getHours()).padStart(2, '0');
-  const mi = String(ist.getMinutes()).padStart(2, '0');
-  return `${dd} ${mm}, ${hh}:${mi} IST`;
+  // Parse as UTC if has T/Z, otherwise append Z to treat SQLite timestamps as UTC
+  const d = new Date(dateStr.includes('T') ? dateStr : dateStr + 'Z');
+  // Browser auto-converts to local timezone (IST for Indian users)
+  const dd = String(d.getDate()).padStart(2, '0');
+  const mm = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getMonth()];
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mi = String(d.getMinutes()).padStart(2, '0');
+  return `${dd} ${mm}, ${hh}:${mi}`;
 }
 
 function showCookieBanner(p) {
