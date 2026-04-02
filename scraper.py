@@ -249,7 +249,10 @@ def ig_auto_refresh_cookies() -> dict:
         ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
         client = httpx.Client(follow_redirects=True, timeout=20)
 
-        # Get CSRF token — first try existing cookies, then fetch from pages
+        # Delete stale cookie file so env var is used for CSRF
+        IG_COOKIES_FILE.unlink(missing_ok=True)
+
+        # Get CSRF token — first try existing cookies (from env var now), then fetch from pages
         existing_cookies = _get_ig_cookies_dict()
         csrf = existing_cookies.get("csrftoken", "")
 
