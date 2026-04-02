@@ -249,20 +249,29 @@ def ig_auto_refresh_cookies() -> dict:
         ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
         client = httpx.Client(follow_redirects=True, timeout=20)
 
-        # Get CSRF token — try multiple pages
-        csrf = ""
-        for url in ["https://www.instagram.com/accounts/login/",
-                     "https://www.instagram.com/",
-                     "https://www.instagram.com/web/__mid/"]:
-            try:
-                r = client.get(url, headers={"User-Agent": ua})
-                csrf = r.cookies.get("csrftoken", "") or client.cookies.get("csrftoken", "")
-                if csrf:
-                    break
-            except Exception:
-                continue
+        # Get CSRF token — first try existing cookies, then fetch from pages
+        existing_cookies = _get_ig_cookies_dict()
+        csrf = existing_cookies.get("csrftoken", "")
+
         if not csrf:
-            return {"error": "Could not get CSRF token from any Instagram page"}
+            for url in ["https://www.instagram.com/accounts/login/",
+                         "https://www.instagram.com/",
+                         "https://www.instagram.com/web/__mid/"]:
+                try:
+                    r = client.get(url, headers={"User-Agent": ua})
+                    csrf = r.cookies.get("csrftoken", "") or client.cookies.get("csrftoken", "")
+                    if csrf:
+                        break
+                except Exception:
+                    continue
+        if not csrf:
+            return {"error": "Could not get CSRF token"}
+
+        # Build login cookies from existing session (mid, ig_did help avoid challenges)
+        login_cookies = {"csrftoken": csrf}
+        for key in ["mid", "ig_did", "datr"]:
+            if existing_cookies.get(key):
+                login_cookies[key] = existing_cookies[key]
 
         # Login
         r2 = client.post("https://www.instagram.com/accounts/login/ajax/", headers={
@@ -272,7 +281,7 @@ def ig_auto_refresh_cookies() -> dict:
         }, data={
             "enc_password": f"#PWD_INSTAGRAM_BROWSER:0:0:{password}",
             "username": username, "queryParams": "{}",
-        }, cookies={"csrftoken": csrf})
+        }, cookies=login_cookies)
 
         data = r2.json()
         if not data.get("authenticated"):
