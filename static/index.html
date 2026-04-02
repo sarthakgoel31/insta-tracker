@@ -167,6 +167,7 @@
     <button class="btn btn-outline" onclick="addColumnPrompt()">+ Column</button>
     <button class="btn btn-outline" onclick="exportToSheet()">Export</button>
     <button class="btn btn-primary" id="refreshBtn" onclick="refreshViews()">Refresh Views</button>
+    <span id="lastRefreshed" style="font-size:11px;color:var(--muted);white-space:nowrap;align-self:center"></span>
   </div>
 </div>
 
@@ -437,6 +438,7 @@ async function loadAll() {
 
     render();
     renderIgSettings();
+    updateLastRefreshed();
   } catch (e) {
     toast('Failed to load: ' + e.message);
   }
@@ -1411,6 +1413,22 @@ async function igLogout() {
 function fmt(n) { return n != null ? n.toLocaleString() : '--'; }
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function formatMonth(ym) { const [y, m] = ym.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m - 1] + ' ' + y; }
+
+function updateLastRefreshed() {
+  const el = document.getElementById('lastRefreshed');
+  const fetched = reels.map(r => r.last_fetched).filter(Boolean).sort().reverse();
+  if (fetched.length) {
+    const utc = new Date(fetched[0] + 'Z');
+    const ist = new Date(utc.getTime() + 5.5 * 60 * 60 * 1000);
+    const dd = String(ist.getDate()).padStart(2, '0');
+    const mm = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ist.getMonth()];
+    const hh = String(ist.getHours()).padStart(2, '0');
+    const mi = String(ist.getMinutes()).padStart(2, '0');
+    el.textContent = `Last: ${dd} ${mm}, ${hh}:${mi} IST`;
+  } else {
+    el.textContent = '';
+  }
+}
 
 function showCookieBanner(p) {
   const banner = document.getElementById('cookieBanner');
