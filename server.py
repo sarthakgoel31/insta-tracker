@@ -509,6 +509,12 @@ _refresh_state = {
     "current_url": "",
     "error_details": [],
 }
+_last_refresh_result = {
+    "completed_at": None,
+    "total": 0,
+    "errors": 0,
+    "error_details": [],
+}
 _refresh_lock = threading.Lock()
 
 
@@ -724,6 +730,11 @@ def _refresh_worker(reel_rows: list):
     with _refresh_lock:
         _refresh_state["running"] = False
         _refresh_state["current_url"] = ""
+        # Persist result for page reloads
+        _last_refresh_result["completed_at"] = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        _last_refresh_result["total"] = _refresh_state["total"]
+        _last_refresh_result["errors"] = _refresh_state["errors"]
+        _last_refresh_result["error_details"] = list(_refresh_state["error_details"])
 
 
 @app.post("/api/refresh")
@@ -770,6 +781,12 @@ def refresh_views():
 def refresh_progress():
     with _refresh_lock:
         return dict(_refresh_state)
+
+
+@app.get("/api/refresh/last")
+def last_refresh():
+    """Get the result of the last completed refresh (persists across page reloads)."""
+    return dict(_last_refresh_result)
 
 
 @app.post("/api/refresh/reset")

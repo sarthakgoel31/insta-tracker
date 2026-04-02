@@ -1414,27 +1414,49 @@ function fmt(n) { return n != null ? n.toLocaleString() : '--'; }
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function formatMonth(ym) { const [y, m] = ym.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m - 1] + ' ' + y; }
 
-function updateLastRefreshed() {
+async function updateLastRefreshed() {
   const el = document.getElementById('lastRefreshed');
-  const fetched = reels.map(r => r.last_fetched).filter(Boolean).sort().reverse();
-  if (fetched.length) {
-    const utc = new Date(fetched[0] + 'Z');
-    const ist = new Date(utc.getTime() + 5.5 * 60 * 60 * 1000);
-    const dd = String(ist.getDate()).padStart(2, '0');
-    const mm = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ist.getMonth()];
-    const hh = String(ist.getHours()).padStart(2, '0');
-    const mi = String(ist.getMinutes()).padStart(2, '0');
-    const total = reels.length;
-    const refreshed = reels.filter(r => r.last_fetched).length;
-    const errCount = lastRefreshErrors ? lastRefreshErrors.length : 0;
-    let txt = `Last: ${dd} ${mm}, ${hh}:${mi} IST | ${refreshed}/${total} refreshed`;
+  try {
+    const last = await api('/api/refresh/last');
+    if (!last.completed_at) {
+      // No server-side data yet, fall back to reel timestamps
+      const fetched = reels.map(r => r.last_fetched).filter(Boolean).sort().reverse();
+      if (fetched.length) {
+        const ts = toIST(fetched[0]);
+        el.innerHTML = `Last: ${ts}`;
+      } else {
+        el.innerHTML = '';
+      }
+      return;
+    }
+    const ts = toIST(last.completed_at);
+    const refreshed = last.total - last.errors;
+    const errCount = last.error_details ? last.error_details.length : last.errors;
+    // Restore errors for Errors tab if page was reloaded
+    if (errCount > 0 && !lastRefreshErrors && last.error_details && last.error_details.length) {
+      lastRefreshErrors = last.error_details;
+      renderTabs();
+    }
+    let txt = `Last: ${ts} | ${refreshed}/${last.total} refreshed`;
     if (errCount > 0) {
       txt += ` | <a href="#" onclick="switchTab('errors');return false" style="color:var(--red);font-weight:600">${errCount} error${errCount > 1 ? 's' : ''}</a>`;
     }
     el.innerHTML = txt;
-  } else {
+  } catch {
     el.innerHTML = '';
   }
+}
+
+function toIST(dateStr) {
+  // dateStr could be "2026-04-02 12:30:00" (SQLite local) or "2026-04-02T12:30:00Z" (UTC)
+  const isUTC = dateStr.includes('T') || dateStr.includes('Z');
+  const d = new Date(isUTC ? dateStr : dateStr + 'Z');
+  const ist = new Date(d.getTime() + (isUTC ? 5.5 * 60 * 60 * 1000 : 0));
+  const dd = String(ist.getDate()).padStart(2, '0');
+  const mm = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ist.getMonth()];
+  const hh = String(ist.getHours()).padStart(2, '0');
+  const mi = String(ist.getMinutes()).padStart(2, '0');
+  return `${dd} ${mm}, ${hh}:${mi} IST`;
 }
 
 function showCookieBanner(p) {
