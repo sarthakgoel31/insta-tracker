@@ -878,12 +878,28 @@ def _fetch_fb_ytdlp(url: str) -> dict:
 
 
 def fetch_facebook(url: str) -> dict:
+    result = None
     try:
         result = asyncio.run(_fetch_fb_playwright(url))
-        if "error" not in result:
-            return result
     except Exception:
         pass
+
+    # If Playwright got views but missing metadata, fill from yt-dlp
+    if result and "error" not in result:
+        if not result.get("account") or not result.get("title"):
+            try:
+                ytdlp = _fetch_fb_ytdlp(url)
+                if "error" not in ytdlp:
+                    if not result.get("account") and ytdlp.get("account"):
+                        result["account"] = ytdlp["account"]
+                    if not result.get("title") and ytdlp.get("title"):
+                        result["title"] = ytdlp["title"]
+                    if not result.get("posted_date") and ytdlp.get("posted_date"):
+                        result["posted_date"] = ytdlp["posted_date"]
+            except Exception:
+                pass
+        return result
+
     return _fetch_fb_ytdlp(url)
 
 
