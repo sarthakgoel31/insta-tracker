@@ -851,6 +851,24 @@ async def _fetch_fb_playwright(url: str) -> dict:
         return {"error": "Could not extract FB view count. Ensure FB cookies are set."}
 
 
+def _fetch_fb_og_views_from_page(url: str) -> int | None:
+    """Fetch og:title directly from FB page HTML and parse views (handles Hindi)."""
+    import html as html_mod
+    import httpx
+
+    try:
+        r = httpx.get(url, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36",
+        }, timeout=15, follow_redirects=True)
+        m = re.search(r'<meta property="og:title" content="(.*?)"', r.text)
+        if m:
+            og = html_mod.unescape(m.group(1))
+            return _parse_fb_og_views(og)
+    except Exception:
+        pass
+    return None
+
+
 def _fetch_fb_ytdlp(url: str) -> dict:
     """Fallback: yt-dlp for Facebook."""
     try:
@@ -865,8 +883,11 @@ def _fetch_fb_ytdlp(url: str) -> dict:
         posted = f"{upload[:4]}-{upload[4:6]}-{upload[6:8]}" if upload else None
         raw_title = meta.get("title") or ""
         uploader = meta.get("uploader") or ""
-        views = _parse_fb_og_views(raw_title) or meta.get("view_count")
+        # Try og:title from page first (handles Hindi "2.9 लाख व्यूज़"), then yt-dlp title, then metadata
+        views = _fetch_fb_og_views_from_page(url) or _parse_fb_og_views(raw_title) or meta.get("view_count")
         clean = re.sub(r"^[\d.]+[KkMm]?\s*views\s*·\s*[\d.]+[KkMm]?\s*reactions?\s*\|\s*", "", raw_title)
+        # Also clean Hindi view patterns from title
+        clean = re.sub(r"^[\d.]+\s*(?:लाख|हज़ार|करोड़)\s*(?:व्यूज़?|views)\s*·\s*[\d.]+\s*(?:लाख|हज़ार|करोड़)?\s*(?:reactions?|प्रतिक्रि)\s*\|\s*", "", clean)
         if uploader and clean.endswith(f" | {uploader}"):
             clean = clean[:-(len(uploader) + 3)]
         return {
