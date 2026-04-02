@@ -247,13 +247,22 @@ def ig_auto_refresh_cookies() -> dict:
 
     try:
         ua = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36"
-        client = httpx.Client(follow_redirects=True, timeout=15)
+        client = httpx.Client(follow_redirects=True, timeout=20)
 
-        # Get CSRF token
-        r = client.get("https://www.instagram.com/accounts/login/", headers={"User-Agent": ua})
-        csrf = r.cookies.get("csrftoken", "")
+        # Get CSRF token — try multiple pages
+        csrf = ""
+        for url in ["https://www.instagram.com/accounts/login/",
+                     "https://www.instagram.com/",
+                     "https://www.instagram.com/web/__mid/"]:
+            try:
+                r = client.get(url, headers={"User-Agent": ua})
+                csrf = r.cookies.get("csrftoken", "") or client.cookies.get("csrftoken", "")
+                if csrf:
+                    break
+            except Exception:
+                continue
         if not csrf:
-            return {"error": "Could not get CSRF token"}
+            return {"error": "Could not get CSRF token from any Instagram page"}
 
         # Login
         r2 = client.post("https://www.instagram.com/accounts/login/ajax/", headers={
