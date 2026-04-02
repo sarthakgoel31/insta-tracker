@@ -1424,9 +1424,16 @@ function updateLastRefreshed() {
     const mm = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][ist.getMonth()];
     const hh = String(ist.getHours()).padStart(2, '0');
     const mi = String(ist.getMinutes()).padStart(2, '0');
-    el.textContent = `Last: ${dd} ${mm}, ${hh}:${mi} IST`;
+    const total = reels.length;
+    const refreshed = reels.filter(r => r.last_fetched).length;
+    const errCount = lastRefreshErrors ? lastRefreshErrors.length : 0;
+    let txt = `Last: ${dd} ${mm}, ${hh}:${mi} IST | ${refreshed}/${total} refreshed`;
+    if (errCount > 0) {
+      txt += ` | <a href="#" onclick="switchTab('errors');return false" style="color:var(--red);font-weight:600">${errCount} error${errCount > 1 ? 's' : ''}</a>`;
+    }
+    el.innerHTML = txt;
   } else {
-    el.textContent = '';
+    el.innerHTML = '';
   }
 }
 
