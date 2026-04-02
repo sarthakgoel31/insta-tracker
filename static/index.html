@@ -1011,7 +1011,16 @@ async function refreshViews() {
     });
 
     await loadAll();
-  } catch (e) { toast('Refresh failed: ' + e.message); }
+  } catch (e) {
+    if (e.message && e.message.includes('already in progress')) {
+      if (confirm('Refresh is stuck. Force reset?')) {
+        await api('/api/refresh/reset', { method: 'POST' });
+        toast('Reset done. Try Refresh Views again.');
+      }
+    } else {
+      toast('Refresh failed: ' + e.message);
+    }
+  }
 
   overlay.style.display = 'none';
   bar.style.display = 'none';

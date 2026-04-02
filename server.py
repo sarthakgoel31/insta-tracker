@@ -496,9 +496,10 @@ def delete_column(col_id: int):
 
 # ── Refresh Views (background with progress) ───────────────
 
-DELAY_IG = 1.5       # seconds — Instagram rate-limit safe
+DELAY_IG = 0.5       # seconds — between concurrent IG batches
 DELAY_FB = 2         # seconds — Facebook/Playwright needs sequential pacing
 YT_WORKERS = 3       # concurrent yt-dlp fetches
+IG_WORKERS = 3       # concurrent IG fetches (v1 API is fast)
 
 _refresh_state = {
     "running": False,
@@ -620,10 +621,14 @@ def _process_single_reel(reel: dict) -> None:
 
 
 def _process_ig(reels: list) -> None:
-    """Process Instagram reels sequentially with 1.5s delay."""
-    for i, reel in enumerate(reels):
-        _process_single_reel(reel)
-        if i < len(reels) - 1:
+    """Process Instagram reels with concurrent workers."""
+    with ThreadPoolExecutor(max_workers=IG_WORKERS) as pool:
+        futures = {pool.submit(_process_single_reel, reel): reel for reel in reels}
+        for future in as_completed(futures):
+            try:
+                future.result()
+            except Exception:
+                logger.exception("IG worker error for %s", futures[future]["url"])
             time.sleep(DELAY_IG)
 
 
