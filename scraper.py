@@ -494,8 +494,10 @@ def _fetch_ig_instaloader(shortcode: str) -> dict | None:
             return None
         post = instaloader.Post.from_shortcode(L.context, shortcode)
         _ig_instaloader_last_error = ""
+        # Prefer video_play_count (matches app) over video_view_count (lower)
+        views = post._node.get("video_play_count") or post.video_view_count
         return {
-            "views": post.video_view_count,
+            "views": views,
             "likes": post.likes,
             "comments": post.comments,
             "posted_date": post.date_utc.strftime("%Y-%m-%d") if post.date_utc else None,
@@ -523,8 +525,9 @@ def _fetch_ig_embed(shortcode: str) -> dict | None:
         html = resp.text
 
         views = None
-        for pattern in [r'"video_view_count":(\d+)', r'"video_views":(\d+)', r'"play_count":(\d+)']:
-            # Embed page has escaped JSON: \"video_view_count\":123
+        # Prefer video_play_count (matches app) over video_view_count (lower metric)
+        for pattern in [r'"video_play_count":(\d+)', r'"play_count":(\d+)',
+                        r'"video_view_count":(\d+)', r'"video_views":(\d+)']:
             for p in [pattern, pattern.replace('"', r'\\"')]:
                 m = re.search(p, html)
                 if m:
@@ -595,13 +598,13 @@ def fetch_instagram(url: str) -> dict:
     if result and result.get("views") is not None:
         return result
 
-    # Strategy 2: Embed page (no auth, works from any IP — uses video_view_count, less accurate)
-    result = _fetch_ig_embed(shortcode)
+    # Strategy 2: Instaloader with saved session (video_play_count = matches app)
+    result = _fetch_ig_instaloader(shortcode)
     if result and result.get("views") is not None:
         return result
 
-    # Strategy 3: Instaloader with saved session
-    result = _fetch_ig_instaloader(shortcode)
+    # Strategy 3: Embed page (no auth — video_play_count if available, else video_view_count)
+    result = _fetch_ig_embed(shortcode)
     if result and result.get("views") is not None:
         return result
 
