@@ -495,11 +495,8 @@ async def _fetch_ig_playwright(url: str) -> dict:
 _ig_instaloader_last_error = ""
 
 def _fetch_ig_instaloader(shortcode: str) -> dict | None:
-    """Use instaloader with saved session to fetch post data. Most reliable method."""
+    """Use instaloader with saved session to fetch post data. Uses GraphQL (different from v1 API)."""
     global _ig_instaloader_last_error
-    if _ig_checkpointed:
-        _ig_instaloader_last_error = "skipped (checkpoint)"
-        return None  # Same account, same checkpoint
     try:
         L = _get_ig_loader()
         if not L.context.is_logged_in:
