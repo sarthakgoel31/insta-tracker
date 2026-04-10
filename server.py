@@ -435,10 +435,29 @@ def refresh_selected_reels(data: BulkAction):
         _refresh_state["cookie_auto_refreshed"] = None
         _refresh_state["cookie_retry_recovered"] = 0
         _refresh_state["cookie_refresh_error"] = ""
+        _refresh_state["crosscheck"] = []
 
     thread = threading.Thread(target=_refresh_worker, args=(reel_rows,), daemon=True)
     thread.start()
     return {"started": True, "total": len(reel_rows)}
+
+
+@app.put("/api/reels/{reel_id}/override-views")
+def override_views(reel_id: int, data: dict):
+    """Manually set the view count for a reel (updates latest snapshot)."""
+    views = data.get("views")
+    if views is None:
+        raise HTTPException(400, "views required")
+    conn = get_db()
+    # Update latest snapshot
+    conn.execute(
+        "UPDATE snapshots SET views = ? WHERE reel_id = ? AND fetched_at = "
+        "(SELECT MAX(fetched_at) FROM snapshots WHERE reel_id = ?)",
+        (views, reel_id, reel_id),
+    )
+    conn.commit()
+    conn.close()
+    return {"ok": True}
 
 
 @app.put("/api/reels/{reel_id}/monthly-views")
@@ -514,6 +533,7 @@ _last_refresh_result = {
     "total": 0,
     "errors": 0,
     "error_details": [],
+    "crosscheck": [],
 }
 _refresh_lock = threading.Lock()
 
@@ -534,6 +554,15 @@ def _process_single_reel(reel: dict) -> None:
             _refresh_state["errors"] += 1
             _refresh_state["error_details"].append({"url": url, "error": data["error"]})
         return
+
+    # Track non-v1 sources for cross-check
+    source = data.pop("_source", "unknown")
+    if source in ("instaloader", "embed") and "instagram.com" in url:
+        with _refresh_lock:
+            _refresh_state.setdefault("crosscheck", []).append({
+                "url": url, "views": data.get("views"), "source": source,
+                "account": data.get("account", ""),
+            })
 
     conn = get_db()
     conn.execute(
@@ -739,6 +768,7 @@ def _refresh_worker(reel_rows: list):
         _last_refresh_result["total"] = _refresh_state["total"]
         _last_refresh_result["errors"] = _refresh_state["errors"]
         _last_refresh_result["error_details"] = list(_refresh_state["error_details"])
+        _last_refresh_result["crosscheck"] = list(_refresh_state.get("crosscheck", []))
 
 
 @app.post("/api/refresh")
@@ -764,6 +794,7 @@ def refresh_views():
         _refresh_state["cookie_auto_refreshed"] = None
         _refresh_state["cookie_retry_recovered"] = 0
         _refresh_state["cookie_refresh_error"] = ""
+        _refresh_state["crosscheck"] = []
 
     thread = threading.Thread(target=_refresh_worker, args=(list(reels),), daemon=True)
     thread.start()
@@ -858,6 +889,7 @@ def _trigger_refresh() -> bool:
         _refresh_state["cookie_auto_refreshed"] = None
         _refresh_state["cookie_retry_recovered"] = 0
         _refresh_state["cookie_refresh_error"] = ""
+        _refresh_state["crosscheck"] = []
 
     thread = threading.Thread(target=_refresh_worker, args=(list(reels),), daemon=True)
     thread.start()

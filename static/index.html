@@ -269,6 +269,14 @@
   </div>
 </div>
 
+<div class="card" id="crosscheckCard" style="display:none">
+  <h2>Cross-check Required</h2>
+  <p style="color:var(--muted);font-size:13px;margin-bottom:12px">These reels were fetched via fallback (not v1 API). Views may be approximate. Click a cell to enter the actual count from the app.</p>
+  <div class="table-wrap">
+    <table id="crosscheckTable" style="width:100%"></table>
+  </div>
+</div>
+
 <!-- Settings Modal -->
 <div class="modal-overlay" id="settingsModal" style="display:none" onclick="if(event.target===this)closeSettings()">
   <div class="modal">
@@ -368,6 +376,7 @@ let cohortSummary = [];
 let pivotData = null;
 let lastImport = null; // { added: N, skipped: N, skipped_details: [] }
 let lastRefreshErrors = null; // [{ url, error }]
+let lastCrosscheck = null; // [{ url, views, source, account }]
 let selectedIds = new Set();
 let selPivotData = null; // pivot data for selected reels
 let selPivotIds = []; // which IDs the current selPivot is for
@@ -394,7 +403,7 @@ async function loadAll() {
   try {
     // Build the reels endpoint based on active tab
     let reelsUrl = '/api/reels';
-    const specialTabs = ['all', 'summary', 'import', 'errors', 'sel-summary'];
+    const specialTabs = ['all', 'summary', 'import', 'errors', 'crosscheck', 'sel-summary'];
     if (!specialTabs.includes(activeTab)) {
       reelsUrl = '/api/reels?month=' + encodeURIComponent(activeTab);
     }
@@ -456,12 +465,14 @@ function render() {
   const importCard = document.getElementById('importCard');
   const errorsCard = document.getElementById('errorsCard');
   const selSummaryCard = document.getElementById('selSummaryCard');
+  const crosscheckCard = document.getElementById('crosscheckCard');
 
   // Hide all special cards first
   summaryCard.style.display = 'none';
   importCard.style.display = 'none';
   errorsCard.style.display = 'none';
   selSummaryCard.style.display = 'none';
+  crosscheckCard.style.display = 'none';
 
   if (activeTab === 'summary') {
     contentCard.style.display = 'none';
@@ -478,6 +489,11 @@ function render() {
     monthlyCard.style.display = 'none';
     errorsCard.style.display = 'block';
     renderErrors();
+  } else if (activeTab === 'crosscheck') {
+    contentCard.style.display = 'none';
+    monthlyCard.style.display = 'none';
+    crosscheckCard.style.display = 'block';
+    renderCrosscheck();
   } else if (activeTab === 'sel-summary') {
     contentCard.style.display = 'none';
     monthlyCard.style.display = 'none';
@@ -512,6 +528,11 @@ function renderTabs() {
   // "Errors" tab — only show if last refresh had errors
   if (lastRefreshErrors && lastRefreshErrors.length) {
     html += `<div class="tab${activeTab === 'errors' ? ' active' : ''}" onclick="switchTab('errors')" style="color:var(--danger)">Errors (${lastRefreshErrors.length})</div>`;
+  }
+
+  // "Cross-check" tab — reels with approximate views
+  if (lastCrosscheck && lastCrosscheck.length) {
+    html += `<div class="tab${activeTab === 'crosscheck' ? ' active' : ''}" onclick="switchTab('crosscheck')" style="color:#d97706">Cross-check (${lastCrosscheck.length})</div>`;
   }
 
   // "Selected Summary" tab — only show if data exists
@@ -996,6 +1017,12 @@ async function refreshViews() {
             clearInterval(poll);
             // Show cookie auto-refresh banner
             showCookieBanner(p);
+            // Store crosscheck data
+            if (p.crosscheck && p.crosscheck.length) {
+              lastCrosscheck = p.crosscheck;
+            } else {
+              lastCrosscheck = null;
+            }
             if (p.errors > 0 && p.error_details && p.error_details.length) {
               lastRefreshErrors = p.error_details;
               toast(`Done. ${p.errors} error(s) — see Errors tab.`);
@@ -1414,6 +1441,51 @@ function fmt(n) { return n != null ? n.toLocaleString() : '--'; }
 function esc(s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
 function formatMonth(ym) { const [y, m] = ym.split('-'); return ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][+m - 1] + ' ' + y; }
 
+async function renderCrosscheck() {
+  if (!lastCrosscheck || !lastCrosscheck.length) return;
+  const table = document.getElementById('crosscheckTable');
+  table.innerHTML = '<thead><tr><th style="text-align:left">URL</th><th style="text-align:left">Account</th><th>Source</th><th class="num">Current Views</th><th class="num">Actual Views</th></tr></thead><tbody>' +
+    lastCrosscheck.map(c => {
+      const reel = reels.find(r => r.url === c.url);
+      const reelId = reel ? reel.id : 0;
+      return `<tr>
+        <td style="word-break:break-all"><a href="${esc(c.url)}" target="_blank">${esc(c.url.replace(/https?:\/\/(www\.)?instagram\.com\//, ''))}</a></td>
+        <td>${esc(c.account || '--')}</td>
+        <td><span style="color:${c.source === 'embed' ? 'var(--red)' : '#d97706'};font-weight:600">${esc(c.source)}</span></td>
+        <td class="num">${fmt(c.views)}</td>
+        <td class="num"><span class="editable" onclick="editCrosscheckViews(${reelId}, this, ${c.views})" style="min-width:60px;display:inline-block">${fmt(c.views)}</span></td>
+      </tr>`;
+    }).join('') + '</tbody>';
+}
+
+async function editCrosscheckViews(reelId, el, currentViews) {
+  if (!reelId) return toast('Reel not found');
+  const input = document.createElement('input');
+  input.className = 'edit-input';
+  input.type = 'number';
+  input.value = currentViews;
+  input.style.width = '100px';
+  input.style.textAlign = 'right';
+  el.replaceWith(input);
+  input.focus();
+  input.select();
+
+  async function save() {
+    const val = input.value.trim();
+    if (!val || parseInt(val) === currentViews) { await loadAll(); return; }
+    try {
+      // Update the snapshot directly with correct views
+      await api(`/api/reels/${reelId}/override-views`, {
+        method: 'PUT', body: JSON.stringify({ views: parseInt(val, 10) })
+      });
+      toast('Views updated!');
+      await loadAll();
+    } catch (e) { toast('Error: ' + e.message); await loadAll(); }
+  }
+  input.addEventListener('blur', save);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); if (e.key === 'Escape') loadAll(); });
+}
+
 async function updateLastRefreshed() {
   const el = document.getElementById('lastRefreshed');
   try {
@@ -1432,11 +1504,14 @@ async function updateLastRefreshed() {
     const ts = toIST(last.completed_at);
     const refreshed = last.total - last.errors;
     const errCount = last.error_details ? last.error_details.length : last.errors;
-    // Restore errors for Errors tab if page was reloaded
+    // Restore errors + crosscheck for tabs if page was reloaded
     if (errCount > 0 && !lastRefreshErrors && last.error_details && last.error_details.length) {
       lastRefreshErrors = last.error_details;
-      renderTabs();
     }
+    if (last.crosscheck && last.crosscheck.length && !lastCrosscheck) {
+      lastCrosscheck = last.crosscheck;
+    }
+    renderTabs();
     let txt = `Last: ${ts} | ${refreshed}/${last.total} refreshed`;
     if (errCount > 0) {
       txt += ` | <a href="#" onclick="switchTab('errors');return false" style="color:var(--red);font-weight:600">${errCount} error${errCount > 1 ? 's' : ''}</a>`;
