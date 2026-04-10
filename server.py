@@ -836,10 +836,13 @@ def refresh_reset():
 @app.post("/api/admin/refresh-ig-cookies")
 def admin_refresh_ig_cookies():
     """Manually trigger IG cookie refresh and reset checkpoint flag."""
-    from scraper import ig_auto_refresh_cookies, _ig_checkpointed
     import scraper
     scraper._ig_checkpointed = False
-    result = ig_auto_refresh_cookies()
+    result = scraper.ig_auto_refresh_cookies()
+    # Test v1 API with the new cookies
+    if result.get("success"):
+        test = scraper._fetch_ig_v1_api("DWnePHAkQiM")
+        result["v1_test"] = "working" if test and test.get("views") else "still_blocked"
     return result
 
 
