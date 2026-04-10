@@ -606,16 +606,19 @@ def fetch_instagram(url: str) -> dict:
     # Strategy 1: v1 media info API (play_count = what IG app shows)
     result = _fetch_ig_v1_api(shortcode)
     if result and result.get("views") is not None:
+        result["_source"] = "v1_api"
         return result
 
     # Strategy 2: Instaloader with saved session (video_play_count = matches app)
     result = _fetch_ig_instaloader(shortcode)
     if result and result.get("views") is not None:
+        result["_source"] = "instaloader"
         return result
 
     # Strategy 3: Embed page (no auth — video_play_count if available, else video_view_count)
     result = _fetch_ig_embed(shortcode)
     if result and result.get("views") is not None:
+        result["_source"] = "embed"
         return result
 
     # Strategy 4: Playwright headless browser fallback
