@@ -85,9 +85,9 @@ def startup():
             except Exception:
                 pass
 
-    # Daily cron disabled — IG v1 API blocked from Railway IP
-    # cron_thread = threading.Thread(target=_cron_loop, daemon=True)
-    # cron_thread.start()
+    # Daily cron — 8 AM IST auto-refresh
+    cron_thread = threading.Thread(target=_cron_loop, daemon=True)
+    cron_thread.start()
 
 
 @app.get("/")
