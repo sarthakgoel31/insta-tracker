@@ -697,27 +697,31 @@ def _refresh_worker(reel_rows: list):
 
     if len(ig_errors) >= 3 and "instagram" in by_platform:
         logger.info("Detected %d IG auth errors — attempting auto cookie refresh", len(ig_errors))
-        result = ig_auto_refresh_cookies()
+        try:
+            result = ig_auto_refresh_cookies()
+        except Exception as e:
+            logger.warning("IG auto cookie refresh exception: %s", e)
+            result = {"error": str(e)}
 
         if result.get("success"):
             logger.info("IG cookies refreshed — re-running %d failed IG reels", len(ig_errors))
-            # Re-run only the failed IG reels
             failed_urls = {e["url"] for e in ig_errors}
             retry_reels = [r for r in by_platform["instagram"] if r["url"] in failed_urls]
 
             with _refresh_lock:
-                # Remove old IG errors, update totals for retry
                 _refresh_state["error_details"] = [
                     e for e in _refresh_state["error_details"] if e not in ig_errors]
                 _refresh_state["errors"] -= len(ig_errors)
                 _refresh_state["completed"] -= len(ig_errors)
-                _refresh_state["total"] = _refresh_state["total"]  # keep same total
                 _refresh_state["cookie_auto_refreshed"] = True
 
-            _process_ig(retry_reels)
+            # Retry with a short timeout — don't let it hang
+            try:
+                _process_ig(retry_reels)
+            except Exception as e:
+                logger.warning("IG retry failed: %s", e)
 
             with _refresh_lock:
-                # Count how many still failed after retry
                 new_ig_errors = [e for e in _refresh_state["error_details"]
                                  if "instagram.com" in e.get("url", "")]
                 _refresh_state["cookie_retry_recovered"] = len(ig_errors) - len(new_ig_errors)
