@@ -833,6 +833,16 @@ def refresh_reset():
     return {"ok": True}
 
 
+@app.post("/api/admin/refresh-ig-cookies")
+def admin_refresh_ig_cookies():
+    """Manually trigger IG cookie refresh and reset checkpoint flag."""
+    from scraper import ig_auto_refresh_cookies, _ig_checkpointed
+    import scraper
+    scraper._ig_checkpointed = False
+    result = ig_auto_refresh_cookies()
+    return result
+
+
 # ── Daily Cron Refresh (8:00 AM IST / 2:30 AM UTC) ──────────
 
 CRON_HOUR_UTC = 2
