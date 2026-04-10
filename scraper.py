@@ -30,6 +30,7 @@ IG_COOKIES_FILE = DATA_DIR / "ig_cookies.json"
 
 _pending_login: dict = {"loader": None, "username": ""}
 _ig_logged_out: bool = False  # Set by ig_logout() to suppress env var cookies
+_ig_checkpointed: bool = False  # Set when v1 API returns checkpoint_required
 
 # Instagram GraphQL — doc_id rotates every few weeks, update when needed
 IG_GRAPHQL_URL = "https://www.instagram.com/api/graphql"
@@ -304,6 +305,7 @@ def ig_auto_refresh_cookies() -> dict:
         USERNAME_FILE.write_text(username)
         _ig_logged_out = False
 
+        _ig_checkpointed = False  # Reset checkpoint flag on successful login
         logger.info("Auto-refreshed IG cookies for %s (%d cookies)", username, len(cookie_list))
         return {"success": True, "cookies_count": len(cookie_list)}
     except Exception as e:
@@ -369,13 +371,21 @@ def _fetch_ig_v1_api(shortcode: str) -> dict | None:
         "X-CSRFToken": cookies.get("csrftoken", ""),
     }
 
+    global _ig_checkpointed
+    if _ig_checkpointed:
+        return None  # Skip v1 API when account is checkpointed
+
     try:
         resp = httpx.get(
             f"https://www.instagram.com/api/v1/media/{media_id}/info/",
-            headers=headers, cookies=cookies, timeout=15, follow_redirects=True,
+            headers=headers, cookies=cookies, timeout=10, follow_redirects=True,
         )
         if resp.status_code != 200:
             logger.warning("IG v1 API returned %s for %s", resp.status_code, shortcode)
+            # Detect checkpoint — skip all future v1 calls this session
+            if resp.status_code == 400 and "checkpoint" in resp.text[:200].lower():
+                _ig_checkpointed = True
+                logger.warning("IG checkpoint detected — disabling v1 API for this session")
             return None
         data = resp.json()
         items = data.get("items", [])
@@ -487,6 +497,9 @@ _ig_instaloader_last_error = ""
 def _fetch_ig_instaloader(shortcode: str) -> dict | None:
     """Use instaloader with saved session to fetch post data. Most reliable method."""
     global _ig_instaloader_last_error
+    if _ig_checkpointed:
+        _ig_instaloader_last_error = "skipped (checkpoint)"
+        return None  # Same account, same checkpoint
     try:
         L = _get_ig_loader()
         if not L.context.is_logged_in:
