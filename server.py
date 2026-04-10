@@ -85,9 +85,9 @@ def startup():
             except Exception:
                 pass
 
-    # Start daily cron refresh thread
-    cron_thread = threading.Thread(target=_cron_loop, daemon=True)
-    cron_thread.start()
+    # Daily cron disabled — IG v1 API blocked from Railway IP
+    # cron_thread = threading.Thread(target=_cron_loop, daemon=True)
+    # cron_thread.start()
 
 
 @app.get("/")
