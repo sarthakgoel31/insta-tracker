@@ -357,7 +357,7 @@ def _shortcode_to_media_id(shortcode: str) -> str:
 
 
 def _fetch_ig_v1_api(shortcode: str) -> dict | None:
-    """Fetch via Instagram v1 media info API — gives exact play_count matching the UI."""
+    """Fetch via Instagram v1 media info API — tries www then mobile (i.instagram.com)."""
     import httpx
 
     cookies = _get_ig_cookies_dict()
@@ -365,51 +365,63 @@ def _fetch_ig_v1_api(shortcode: str) -> dict | None:
         return None
 
     media_id = _shortcode_to_media_id(shortcode)
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "X-IG-App-ID": IG_APP_ID,
-        "X-CSRFToken": cookies.get("csrftoken", ""),
-    }
 
     global _ig_checkpointed
-    if _ig_checkpointed:
-        return None  # Skip v1 API when account is checkpointed
 
-    try:
-        resp = httpx.get(
-            f"https://www.instagram.com/api/v1/media/{media_id}/info/",
-            headers=headers, cookies=cookies, timeout=10, follow_redirects=True,
-        )
-        if resp.status_code != 200:
-            logger.warning("IG v1 API returned %s for %s", resp.status_code, shortcode)
-            # Detect checkpoint — skip all future v1 calls this session
-            if resp.status_code == 400 and "checkpoint" in resp.text[:200].lower():
-                _ig_checkpointed = True
-                logger.warning("IG checkpoint detected — disabling v1 API for this session")
-            return None
-        data = resp.json()
-        items = data.get("items", [])
-        if not items:
-            logger.warning("IG v1 API returned no items for %s", shortcode)
-            return None
+    # Try two endpoints: www (best play_count) then mobile (fallback, still good)
+    endpoints = []
+    if not _ig_checkpointed:
+        endpoints.append({
+            "url": f"https://www.instagram.com/api/v1/media/{media_id}/info/",
+            "headers": {
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/131.0.0.0 Safari/537.36",
+                "X-IG-App-ID": IG_APP_ID,
+                "X-CSRFToken": cookies.get("csrftoken", ""),
+            },
+            "name": "www",
+        })
+    endpoints.append({
+        "url": f"https://i.instagram.com/api/v1/media/{media_id}/info/",
+        "headers": {
+            "User-Agent": "Instagram 317.0.0.0.64 Android (31/12; 420dpi; 1080x2340; samsung; SM-G991B; o1s; exynos2100; en_US)",
+            "X-IG-App-ID": "567067343352427",
+        },
+        "name": "mobile",
+    })
 
-        m = items[0]
-        likes = m.get("like_count")
-        if likes is not None and likes < 0:
-            likes = None
-        caption_text = (m.get("caption") or {}).get("text", "")
+    for ep in endpoints:
+        try:
+            resp = httpx.get(ep["url"], headers=ep["headers"], cookies=cookies,
+                             timeout=10, follow_redirects=True)
+            if resp.status_code != 200:
+                if ep["name"] == "www" and resp.status_code == 400 and "checkpoint" in resp.text[:200].lower():
+                    _ig_checkpointed = True
+                    logger.warning("IG checkpoint on www — falling back to mobile API")
+                continue
+            data = resp.json()
+            items = data.get("items", [])
+            if not items:
+                continue
 
-        return {
-            "views": m.get("play_count") or m.get("view_count"),
-            "likes": likes,
-            "comments": m.get("comment_count", 0),
-            "posted_date": datetime.fromtimestamp(m["taken_at"], tz=timezone.utc).strftime("%Y-%m-%d") if m.get("taken_at") else None,
-            "title": caption_text[:100],
-            "account": m.get("user", {}).get("username", ""),
-        }
-    except Exception as e:
-        logger.warning("IG v1 API failed: %s", e)
-        return None
+            m = items[0]
+            likes = m.get("like_count")
+            if likes is not None and likes < 0:
+                likes = None
+            caption_text = (m.get("caption") or {}).get("text", "")
+
+            return {
+                "views": m.get("play_count") or m.get("view_count"),
+                "likes": likes,
+                "comments": m.get("comment_count", 0),
+                "posted_date": datetime.fromtimestamp(m["taken_at"], tz=timezone.utc).strftime("%Y-%m-%d") if m.get("taken_at") else None,
+                "title": caption_text[:100],
+                "account": m.get("user", {}).get("username", ""),
+            }
+        except Exception as e:
+            logger.warning("IG v1 API (%s) failed: %s", ep["name"], e)
+            continue
+
+    return None
 
 
 # ── Instagram: Playwright fallback ────────────────────────
