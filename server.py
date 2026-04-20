@@ -710,7 +710,9 @@ def _run_platform_threads(by_platform: dict[str, list]):
 def _refresh_worker(reel_rows: list):
     """Runs in background thread. Splits reels by platform and processes in parallel.
     After completion, detects IG cookie expiry and auto-heals."""
+    import scraper
     from scraper import ig_auto_refresh_cookies
+    scraper._ig_checkpointed = False  # Reset checkpoint flag at start of each refresh
 
     # Group reels by platform
     by_platform: dict[str, list] = defaultdict(list)
