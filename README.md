@@ -2,11 +2,7 @@
 
 **Social media branding tracker with reel view analytics and monthly cohort analysis.**
 
----
-
-## Demo
-
-> Screenshots and demo video to be added.
+![Insta Tracker](docs/insta-tracker-card.png)
 
 ---
 
