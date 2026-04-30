@@ -730,7 +730,7 @@ def _fetch_yt_dlp(video_id: str, url: str) -> dict:
                 "account": info.get("uploader") or info.get("channel") or "",
             }
     except Exception as e:
-        return {"error": f"Could not extract view count from YouTube page"}
+        return {"error": f"yt-dlp failed: {e}"}
 
 
 # ── Facebook: Playwright ──────────────────────────────────
