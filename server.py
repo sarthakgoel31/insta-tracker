@@ -386,6 +386,12 @@ def update_reel_route(request: Request, reel_id: int, data: ReelUpdate):
 
 @app.delete("/api/reels/{reel_id}")
 def delete_reel_route(request: Request, reel_id: int):
+    if is_anonymous(request):
+        ip = request.client.host
+        with _trial_lock:
+            trial = _trial_data.get(ip, [])
+            _trial_data[ip] = [r for r in trial if r["id"] != reel_id]
+        return {"ok": True}
     user_id = require_auth(request)
     db_delete_reel(user_id, reel_id)
     return {"ok": True}
@@ -400,12 +406,32 @@ def bulk_delete_reels_route(request: Request, data: BulkAction):
 
 @app.post("/api/reels/{reel_id}/refresh")
 def refresh_single_reel(request: Request, reel_id: int):
+    # Trial mode: re-scrape in-memory reel
+    if is_anonymous(request):
+        ip = request.client.host
+        with _trial_lock:
+            trial = _trial_data.get(ip, [])
+            reel = next((r for r in trial if r["id"] == reel_id), None)
+        if not reel:
+            raise HTTPException(404, "Reel not found")
+        data = fetch_reel_data(reel["url"])
+        if "error" not in data:
+            with _trial_lock:
+                reel["views"] = data.get("views")
+                reel["likes"] = data.get("likes")
+                reel["comments"] = data.get("comments")
+                reel["last_fetched"] = datetime.now(timezone.utc).isoformat()
+                if data.get("title") and not reel.get("title"):
+                    reel["title"] = data["title"]
+                if data.get("account") and not reel.get("account"):
+                    reel["account"] = data["account"]
+        return {"ok": True}
+
     user_id = require_auth(request)
     reel = get_reel(user_id, reel_id)
     if not reel:
         raise HTTPException(404, "Reel not found")
 
-    # Block IG refresh for free users
     tier = get_user_tier(user_id)
     if reel.get("platform") == "instagram" and tier == "free":
         raise HTTPException(403, f"Instagram tracking requires a paid plan. Book a call: {CAL_URL}")
@@ -662,6 +688,21 @@ def _refresh_worker(user_id: str, reel_rows: list):
 
 @app.post("/api/refresh")
 def refresh_views(request: Request):
+    if is_anonymous(request):
+        ip = request.client.host
+        with _trial_lock:
+            trial = _trial_data.get(ip, [])
+        if not trial:
+            return {"total": 0, "message": "No reels to refresh"}
+        for reel in trial:
+            data = fetch_reel_data(reel["url"])
+            if "error" not in data:
+                reel["views"] = data.get("views")
+                reel["likes"] = data.get("likes")
+                reel["comments"] = data.get("comments")
+                reel["last_fetched"] = datetime.now(timezone.utc).isoformat()
+        return {"started": False, "total": len(trial), "message": "Refreshed"}
+
     user_id = require_auth(request)
     tier = get_user_tier(user_id)
 

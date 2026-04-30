@@ -597,11 +597,12 @@ async function api(path, opts = {}) {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    // If 401 and has a signup message, show auth modal
-    if (res.status === 401) {
+    const detail = err.detail || res.statusText;
+    // Only show auth modal when trial limit is reached (403 with "Trial limit")
+    if (res.status === 403 && detail.includes('Trial limit')) {
       openAuthModal();
     }
-    throw new Error(err.detail || res.statusText);
+    throw new Error(detail);
   }
   return res.json();
 }
