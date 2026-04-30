@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Social Branding Tracker</title>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
   :root {
     --bg: #f3f4f6; --card: #fff; --border: #e5e7eb;
@@ -437,13 +437,12 @@ https://www.facebook.com/reel/123456"></textarea>
 // ── Supabase Auth ──
 const SUPABASE_URL = 'https://qutgezcgynqxqdtcgmfz.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_ffeLPBFV2ZlnqF_2RMk7Jg_gVn_LBGH';
-let supabaseClient = null;
+let sb = null;
 try {
-  supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 } catch(e) {
   console.warn('Supabase SDK not loaded, auth disabled:', e);
 }
-const supabase = supabaseClient;
 
 let currentUser = null; // { id, email } or null
 let authToken = null;
@@ -494,9 +493,9 @@ async function handleAuth(e) {
   try {
     let result;
     if (authMode === 'signup') {
-      result = await supabase.auth.signUp({ email, password });
+      result = await sb.auth.signUp({ email, password });
     } else {
-      result = await supabase.auth.signInWithPassword({ email, password });
+      result = await sb.auth.signInWithPassword({ email, password });
     }
     if (result.error) throw result.error;
     if (authMode === 'signup' && !result.data.session) {
@@ -521,7 +520,7 @@ async function handleAuth(e) {
 }
 
 async function signOut() {
-  if (supabase) await supabase.auth.signOut();
+  if (sb) await sb.auth.signOut();
   currentUser = null;
   authToken = null;
   userTier = 'trial';
@@ -558,14 +557,14 @@ function updateAuthUI() {
 
 // Check existing session on load
 async function initAuth() {
-  if (supabase) {
+  if (sb) {
     try {
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await sb.auth.getSession();
       if (session) {
         currentUser = session.user;
         authToken = session.access_token;
       }
-      supabase.auth.onAuthStateChange((event, session) => {
+      sb.auth.onAuthStateChange((event, session) => {
         if (session) {
           currentUser = session.user;
           authToken = session.access_token;
@@ -1702,7 +1701,15 @@ async function exportToSheet() {
 }
 
 // ── Init ──
-initAuth();
+initAuth().catch(e => {
+  console.error('initAuth failed:', e);
+  document.title = 'ERROR: ' + e.message;
+  // Still try to load without auth
+  loadAll().catch(e2 => {
+    console.error('loadAll also failed:', e2);
+    document.title = 'LOAD ERROR: ' + e2.message;
+  });
+});
 </script>
 </body>
 </html>
