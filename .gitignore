@@ -2,3 +2,8 @@ data/
 __pycache__/
 *.pyc
 cookies.txt
+
+# Environment variables
+.env
+.env.*
+!.env.example
