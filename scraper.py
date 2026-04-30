@@ -703,9 +703,34 @@ def fetch_youtube(url: str) -> dict:
                 "posted_date": posted, "title": title, "account": account,
             }
 
-        return {"error": "Could not extract view count from YouTube page"}
+        # Fallback: try yt-dlp
+        return _fetch_yt_dlp(video_id, url)
     except Exception as e:
+        # Fallback: try yt-dlp
+        try:
+            return _fetch_yt_dlp(video_id, url)
+        except Exception:
+            pass
         return {"error": f"YouTube fetch failed: {e}"}
+
+
+def _fetch_yt_dlp(video_id: str, url: str) -> dict:
+    """Fallback YouTube fetcher using yt-dlp."""
+    try:
+        import yt_dlp
+        ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            return {
+                "views": info.get("view_count"),
+                "likes": info.get("like_count"),
+                "comments": info.get("comment_count"),
+                "posted_date": info.get("upload_date", "")[:10] if info.get("upload_date") else None,
+                "title": (info.get("title") or "")[:100],
+                "account": info.get("uploader") or info.get("channel") or "",
+            }
+    except Exception as e:
+        return {"error": f"Could not extract view count from YouTube page"}
 
 
 # ── Facebook: Playwright ──────────────────────────────────
