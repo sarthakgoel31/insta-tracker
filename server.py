@@ -106,6 +106,13 @@ def health():
     return {"status": "ok"}
 
 
+@app.get("/api/test-scrape")
+def test_scrape(url: str):
+    """Debug: test scraping a URL and return raw result."""
+    result = fetch_reel_data(url)
+    return result
+
+
 # ── Models ──────────────────────────────────────────────────
 
 
@@ -264,19 +271,18 @@ def add_reel(request: Request, reel: ReelCreate):
             # Check duplicate
             if any(r["url"] == reel.url.strip() for r in trial):
                 raise HTTPException(400, "URL already exists")
-        # Scrape immediately for trial
-        data = fetch_reel_data(reel.url.strip())
+        # Add instantly — scraping happens on refresh
         trial_reel = {
             "id": len(trial) + 1,
             "url": reel.url.strip(),
-            "title": data.get("title", reel.title.strip()),
-            "posted_date": data.get("posted_date"),
+            "title": reel.title.strip(),
+            "posted_date": None,
             "platform": platform,
-            "account": data.get("account", ""),
-            "views": data.get("views") if "error" not in data else None,
-            "likes": data.get("likes") if "error" not in data else None,
-            "comments": data.get("comments") if "error" not in data else None,
-            "last_fetched": datetime.now(timezone.utc).isoformat(),
+            "account": "",
+            "views": None,
+            "likes": None,
+            "comments": None,
+            "last_fetched": None,
             "growth": None,
             "monthly_views": [],
             "current_month_auto": 0,
@@ -284,7 +290,6 @@ def add_reel(request: Request, reel: ReelCreate):
             "created_at": datetime.now(timezone.utc).isoformat(),
             "ig_locked": False,
             "ig_locked_message": None,
-            "error": data.get("error"),
         }
         with _trial_lock:
             trial.append(trial_reel)
@@ -328,15 +333,11 @@ def add_reels_bulk(request: Request, data: BulkAdd):
                 if any(r["url"] == url for r in trial):
                     skipped_list.append({"url": url, "reason": "Duplicate URL"})
                     continue
-            result = fetch_reel_data(url)
             trial_reel = {
-                "id": len(trial) + 1, "url": url, "title": result.get("title", ""),
-                "posted_date": result.get("posted_date"), "platform": platform,
-                "account": result.get("account", ""),
-                "views": result.get("views") if "error" not in result else None,
-                "likes": result.get("likes") if "error" not in result else None,
-                "comments": result.get("comments") if "error" not in result else None,
-                "last_fetched": datetime.now(timezone.utc).isoformat(),
+                "id": len(trial) + 1, "url": url, "title": "",
+                "posted_date": None, "platform": platform, "account": "",
+                "views": None, "likes": None, "comments": None,
+                "last_fetched": None,
                 "growth": None, "monthly_views": [], "current_month_auto": 0,
                 "custom_fields": {}, "created_at": datetime.now(timezone.utc).isoformat(),
                 "ig_locked": False, "ig_locked_message": None,

@@ -1183,12 +1183,17 @@ async function addReel(e) {
   const form = e.target;
   const url = form.url.value.trim();
   const title = form.title.value.trim();
+  const btn = form.querySelector('button[type="submit"]');
+  btn.disabled = true;
+  btn.textContent = 'Adding...';
   try {
     await api('/api/reels', { method: 'POST', body: JSON.stringify({ url, title }) });
     form.reset();
     await loadAll();
-    toast('Added');
+    toast('Added! Click Refresh Views to fetch view counts.');
   } catch (e) { toast('Error: ' + e.message); }
+  btn.disabled = false;
+  btn.textContent = 'Add';
 }
 
 async function deleteReel(id) {
