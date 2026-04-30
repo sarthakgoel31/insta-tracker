@@ -3,7 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>MBB Social Branding Tracker</title>
+<title>Social Branding Tracker</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root {
     --bg: #f3f4f6; --card: #fff; --border: #e5e7eb;
@@ -149,23 +150,56 @@
   .action-bar .btn { padding: 6px 14px; font-size: 13px; }
   .action-bar .btn-ghost { background: transparent; color: #fff; border: 1px solid rgba(255,255,255,.3); }
   .action-bar .btn-ghost:hover { background: rgba(255,255,255,.1); }
+
+  /* Auth styles */
+  .auth-bar { display: flex; align-items: center; gap: 8px; }
+  .auth-bar .user-email { font-size: 13px; color: var(--muted); max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .auth-modal-body { padding: 32px; }
+  .auth-modal-body h2 { font-size: 22px; font-weight: 700; margin-bottom: 4px; }
+  .auth-modal-body p { font-size: 14px; color: var(--muted); margin-bottom: 20px; }
+  .auth-tabs { display: flex; gap: 0; margin-bottom: 20px; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .auth-tab { flex: 1; padding: 10px; text-align: center; font-size: 14px; font-weight: 600; cursor: pointer; background: var(--bg); border: none; color: var(--muted); transition: all .15s; }
+  .auth-tab.active { background: var(--accent); color: #fff; }
+  .auth-form { display: flex; flex-direction: column; gap: 12px; }
+  .auth-form input { padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; font-size: 14px; outline: none; }
+  .auth-form input:focus { border-color: var(--accent); }
+  .auth-form .btn { width: 100%; padding: 12px; font-size: 15px; }
+  .auth-error { color: var(--red); font-size: 13px; min-height: 18px; }
+  .auth-skip { text-align: center; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .auth-skip a { color: var(--accent); cursor: pointer; text-decoration: none; }
+  .auth-skip a:hover { text-decoration: underline; }
+
+  /* Trial banner */
+  .trial-banner { background: linear-gradient(90deg, #eef2ff, #e0e7ff); border: 1px solid #c7d2fe; color: #3730a3; padding: 10px 20px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+  .trial-banner .trial-cta { background: var(--accent); color: #fff; border: none; padding: 6px 16px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+  .trial-banner .trial-cta:hover { background: #4f46e5; }
+
+  /* IG locked row */
+  .ig-locked-cell { color: var(--muted); font-style: italic; font-size: 12px; }
+  .ig-locked-badge { display: inline-flex; align-items: center; gap: 4px; background: #fef3c7; color: #92400e; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
 </style>
 </head>
 <body>
 
 <div id="cookieBanner" class="banner" style="display:none"></div>
 
-<div id="loginBanner" class="banner banner-warn" style="display:none">
-  Instagram not connected. <a onclick="openSettings()">Open Settings</a> to log in.
+<div id="loginBanner" class="banner banner-warn" style="display:none"></div>
+
+<div id="trialBanner" class="trial-banner" style="display:none">
+  <span><strong>Trial mode</strong> — <span id="trialCount">0</span>/<span id="trialLimit">5</span> URLs used. Sign up free for unlimited YouTube & Facebook tracking.</span>
+  <button class="trial-cta" onclick="openAuthModal()">Sign Up Free</button>
 </div>
 
 <div class="header">
-  <h1>MBB Social Branding Tracker</h1>
+  <h1>Social Branding Tracker</h1>
   <div class="header-actions">
-    <button class="btn btn-outline" onclick="openSettings()">Settings</button>
+    <div class="auth-bar" id="authBar">
+      <span class="user-email" id="userEmail"></span>
+      <button class="btn btn-outline btn-sm" id="authBtn" onclick="openAuthModal()">Sign In</button>
+    </div>
     <button class="btn btn-outline" onclick="openBulkAdd()">Bulk Add</button>
-    <button class="btn btn-outline" onclick="addColumnPrompt()">+ Column</button>
-    <button class="btn btn-outline" onclick="exportToSheet()">Export</button>
+    <button class="btn btn-outline" id="colBtn" onclick="addColumnPrompt()">+ Column</button>
+    <button class="btn btn-outline" id="exportBtn" onclick="exportToSheet()">Export</button>
     <button class="btn btn-primary" id="refreshBtn" onclick="refreshViews()">Refresh Views</button>
     <span id="lastRefreshed" style="font-size:11px;color:var(--muted);white-space:nowrap;align-self:center"></span>
   </div>
@@ -277,6 +311,35 @@
   </div>
 </div>
 
+<!-- Auth Modal -->
+<div class="modal-overlay" id="authModal" style="display:none" onclick="if(event.target===this)closeAuthModal()">
+  <div class="modal" style="width:400px">
+    <div class="modal-header">
+      <h3>Social Branding Tracker</h3>
+      <button class="modal-close" onclick="closeAuthModal()">&times;</button>
+    </div>
+    <div class="auth-modal-body">
+      <div class="auth-tabs">
+        <button class="auth-tab active" id="tabLogin" onclick="switchAuthTab('login')">Log In</button>
+        <button class="auth-tab" id="tabSignup" onclick="switchAuthTab('signup')">Sign Up</button>
+      </div>
+      <form class="auth-form" id="authForm" onsubmit="handleAuth(event)">
+        <input type="email" id="authEmail" placeholder="Email" required>
+        <input type="password" id="authPassword" placeholder="Password" required minlength="6">
+        <div class="auth-error" id="authError"></div>
+        <button class="btn btn-primary" type="submit" id="authSubmit">Log In</button>
+      </form>
+      <div class="auth-skip">
+        <a onclick="closeAuthModal()">Continue without account (5 URL trial)</a>
+      </div>
+      <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--border);font-size:12px;color:var(--muted);text-align:center">
+        <strong>Free:</strong> Unlimited YouTube + Facebook<br>
+        <strong>Paid:</strong> Instagram tracking — <a href="https://cal.com/sarthakgoel31" target="_blank" style="color:var(--accent)">book a call</a>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Settings Modal -->
 <div class="modal-overlay" id="settingsModal" style="display:none" onclick="if(event.target===this)closeSettings()">
   <div class="modal">
@@ -287,7 +350,13 @@
     <div class="modal-body">
       <div class="setting-section">
         <h4><span class="badge badge-instagram">IG</span> Instagram</h4>
-        <div id="igSection"></div>
+        <div id="igSection">
+          <div class="status-line">
+            <span class="status-dot status-off"></span>
+            <span>Paid feature only</span>
+          </div>
+          <p class="status-info" style="margin-top:6px">Instagram tracking requires a paid plan. <a href="https://cal.com/sarthakgoel31" target="_blank" style="color:var(--accent)">Book a call</a> to enable.</p>
+        </div>
       </div>
       <div class="setting-section">
         <h4><span class="badge badge-youtube">YT</span> YouTube</h4>
@@ -365,33 +434,163 @@ https://www.facebook.com/reel/123456"></textarea>
 </div>
 
 <script>
+// ── Supabase Auth ──
+const SUPABASE_URL = 'https://qutgezcgynqxqdtcgmfz.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_ffeLPBFV2ZlnqF_2RMk7Jg_gVn_LBGH';
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let currentUser = null; // { id, email } or null
+let authToken = null;
+let authMode = 'login'; // 'login' | 'signup'
+
 let reels = [];
 let columns = [];
 let monthlyData = [];
-let igState = 'disconnected'; // 'disconnected' | '2fa' | 'connected'
+let igState = 'disconnected';
 let igUser = '';
 let availableMonths = [];
 let activeTab = 'all';
 let cohortSummary = [];
 let pivotData = null;
-let lastImport = null; // { added: N, skipped: N, skipped_details: [] }
-let lastRefreshErrors = null; // [{ url, error }]
-let lastCrosscheck = null; // [{ url, views, source, account }]
+let lastImport = null;
+let lastRefreshErrors = null;
+let lastCrosscheck = null;
 let selectedIds = new Set();
-let selPivotData = null; // pivot data for selected reels
-let selPivotIds = []; // which IDs the current selPivot is for
+let selPivotData = null;
+let selPivotIds = [];
+let userTier = 'trial'; // 'trial' | 'free' | 'paid'
+let trialUsed = 0;
+let trialLimit = 5;
+
+// ── Auth UI ──
+
+function openAuthModal() { document.getElementById('authModal').style.display = 'flex'; }
+function closeAuthModal() { document.getElementById('authModal').style.display = 'none'; }
+
+function switchAuthTab(tab) {
+  authMode = tab;
+  document.getElementById('tabLogin').className = 'auth-tab' + (tab === 'login' ? ' active' : '');
+  document.getElementById('tabSignup').className = 'auth-tab' + (tab === 'signup' ? ' active' : '');
+  document.getElementById('authSubmit').textContent = tab === 'login' ? 'Log In' : 'Sign Up';
+  document.getElementById('authError').textContent = '';
+}
+
+async function handleAuth(e) {
+  e.preventDefault();
+  const email = document.getElementById('authEmail').value;
+  const password = document.getElementById('authPassword').value;
+  const errEl = document.getElementById('authError');
+  const btn = document.getElementById('authSubmit');
+  btn.disabled = true;
+  btn.textContent = 'Loading...';
+  errEl.textContent = '';
+
+  try {
+    let result;
+    if (authMode === 'signup') {
+      result = await supabase.auth.signUp({ email, password });
+    } else {
+      result = await supabase.auth.signInWithPassword({ email, password });
+    }
+    if (result.error) throw result.error;
+    if (authMode === 'signup' && !result.data.session) {
+      errEl.style.color = 'var(--green)';
+      errEl.textContent = 'Check your email to confirm your account.';
+      btn.disabled = false;
+      btn.textContent = authMode === 'login' ? 'Log In' : 'Sign Up';
+      return;
+    }
+    // Success
+    currentUser = result.data.user;
+    authToken = result.data.session.access_token;
+    closeAuthModal();
+    updateAuthUI();
+    loadAll();
+  } catch (err) {
+    errEl.style.color = 'var(--red)';
+    errEl.textContent = err.message || 'Auth failed';
+  }
+  btn.disabled = false;
+  btn.textContent = authMode === 'login' ? 'Log In' : 'Sign Up';
+}
+
+async function signOut() {
+  await supabase.auth.signOut();
+  currentUser = null;
+  authToken = null;
+  userTier = 'trial';
+  updateAuthUI();
+  loadAll();
+}
+
+function updateAuthUI() {
+  const emailEl = document.getElementById('userEmail');
+  const btnEl = document.getElementById('authBtn');
+  const trialBanner = document.getElementById('trialBanner');
+  const colBtn = document.getElementById('colBtn');
+  const exportBtn = document.getElementById('exportBtn');
+
+  if (currentUser) {
+    emailEl.textContent = currentUser.email;
+    btnEl.textContent = 'Sign Out';
+    btnEl.onclick = signOut;
+    trialBanner.style.display = 'none';
+    colBtn.style.display = '';
+    exportBtn.style.display = '';
+  } else {
+    emailEl.textContent = '';
+    btnEl.textContent = 'Sign In';
+    btnEl.onclick = openAuthModal;
+    trialBanner.style.display = 'flex';
+    document.getElementById('trialCount').textContent = trialUsed;
+    document.getElementById('trialLimit').textContent = trialLimit;
+    // Hide features that need auth
+    colBtn.style.display = 'none';
+    exportBtn.style.display = 'none';
+  }
+}
+
+// Check existing session on load
+async function initAuth() {
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session) {
+    currentUser = session.user;
+    authToken = session.access_token;
+  }
+  // Listen for auth changes (token refresh, etc.)
+  supabase.auth.onAuthStateChange((event, session) => {
+    if (session) {
+      currentUser = session.user;
+      authToken = session.access_token;
+    } else {
+      currentUser = null;
+      authToken = null;
+    }
+    updateAuthUI();
+  });
+  updateAuthUI();
+  loadAll();
+}
 
 // ── API ──
 
 async function api(path, opts = {}) {
   const sep = path.includes('?') ? '&' : '?';
+  const headers = { 'Content-Type': 'application/json' };
+  if (authToken) {
+    headers['Authorization'] = 'Bearer ' + authToken;
+  }
   const res = await fetch(path + sep + '_t=' + Date.now(), {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     cache: 'no-store',
     ...opts,
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
+    // If 401 and has a signup message, show auth modal
+    if (res.status === 401) {
+      openAuthModal();
+    }
     throw new Error(err.detail || res.statusText);
   }
   return res.json();
@@ -434,16 +633,23 @@ async function loadAll() {
       pivotData = results[5];
     }
 
-    if (s.instagram.logged_in) {
+    // Auth/tier state
+    userTier = s.tier || 'trial';
+    if (s.trial_used !== undefined) {
+      trialUsed = s.trial_used;
+      trialLimit = s.trial_limit;
+    }
+    updateAuthUI();
+
+    // IG state for settings display
+    if (s.instagram && s.instagram.available) {
       igState = 'connected';
-      igUser = s.instagram.username || '';
     } else {
       igState = 'disconnected';
-      igUser = '';
     }
-    const hasIgReels = reels.some(r => r.platform === 'instagram');
-    document.getElementById('loginBanner').style.display =
-      (!s.instagram.logged_in && hasIgReels) ? 'flex' : 'none';
+    igUser = '';
+    // Hide old login banner — we use trial banner now
+    document.getElementById('loginBanner').style.display = 'none';
 
     render();
     renderIgSettings();
@@ -680,9 +886,9 @@ function renderAllTable(head, body, empty, filtered) {
       <td><span class="editable" onclick="editField(${r.id}, 'title', this)">${esc(r.title) || '--'}</span></td>
       <td>${formatDate(r.posted_date)}</td>
       ${customCells}
-      <td class="num">${r.views !== null ? fmt(r.views) : '--'}</td>
-      <td class="num">${r.comments !== null ? fmt(r.comments) : '--'}</td>
-      <td><button class="btn btn-danger" onclick="deleteReel(${r.id})">Delete</button></td>
+      <td class="num">${r.ig_locked ? '<span class="ig-locked-badge">Paid only</span>' : (r.views !== null ? fmt(r.views) : '--')}</td>
+      <td class="num">${r.ig_locked ? '' : (r.comments !== null ? fmt(r.comments) : '--')}</td>
+      <td>${r.ig_locked ? '<a href="https://cal.com/sarthakgoel31" target="_blank" class="btn btn-sm btn-primary" style="font-size:11px;padding:4px 10px">Unlock</a>' : '<button class="btn btn-danger" onclick="deleteReel(' + r.id + ')">Delete</button>'}</td>
     </tr>`;
   }).join('');
 }
@@ -1344,95 +1550,7 @@ function closeSettings() {
 }
 
 function renderIgSettings() {
-  const el = document.getElementById('igSection');
-  if (igState === 'connected') {
-    el.innerHTML = `
-      <div class="status-line">
-        <span class="status-dot status-ok"></span>
-        Connected as <strong>@${esc(igUser)}</strong>
-        <button class="btn btn-outline btn-sm" onclick="igLogout()" style="margin-left:auto">Disconnect</button>
-      </div>`;
-  } else if (igState === '2fa') {
-    el.innerHTML = `
-      <p class="status-info" style="margin-bottom:8px">Enter the 2FA code from your authenticator app:</p>
-      <div style="display:flex;gap:8px">
-        <input id="ig2faCode" placeholder="6-digit code" style="flex:1;padding:8px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;outline:none">
-        <button class="btn btn-primary btn-sm" onclick="submitIg2fa()">Verify</button>
-      </div>`;
-    setTimeout(() => document.getElementById('ig2faCode')?.focus(), 100);
-  } else {
-    el.innerHTML = `
-      <div class="setting-row">
-        <input id="igUsername" placeholder="Instagram username">
-        <input id="igPassword" placeholder="Password" type="password">
-        <button class="btn btn-primary btn-sm" id="igLoginBtn" onclick="submitIgLogin()">Connect</button>
-      </div>`;
-  }
-}
-
-async function submitIgLogin() {
-  const user = document.getElementById('igUsername').value.trim();
-  const pass = document.getElementById('igPassword').value;
-  if (!user || !pass) return toast('Enter username and password');
-  const btn = document.getElementById('igLoginBtn');
-  btn.disabled = true;
-  btn.textContent = 'Connecting...';
-  try {
-    const res = await api('/api/auth/instagram', {
-      method: 'POST', body: JSON.stringify({ username: user, password: pass })
-    });
-    if (res.success) {
-      igState = 'connected';
-      igUser = res.username;
-      toast('Instagram connected!');
-      renderIgSettings();
-      loadAll();
-    } else if (res.needs_2fa) {
-      igState = '2fa';
-      renderIgSettings();
-    } else if (res.error) {
-      toast(res.error);
-      btn.disabled = false;
-      btn.textContent = 'Connect';
-    }
-  } catch (e) {
-    toast('Login failed: ' + e.message);
-    btn.disabled = false;
-    btn.textContent = 'Connect';
-  }
-}
-
-async function submitIg2fa() {
-  const code = document.getElementById('ig2faCode').value.trim();
-  if (!code) return;
-  try {
-    const res = await api('/api/auth/instagram/2fa', {
-      method: 'POST', body: JSON.stringify({ code })
-    });
-    if (res.success) {
-      igState = 'connected';
-      igUser = res.username;
-      toast('Instagram connected!');
-      renderIgSettings();
-      loadAll();
-    } else {
-      toast(res.error || '2FA failed');
-      igState = 'disconnected';
-      renderIgSettings();
-    }
-  } catch (e) {
-    toast('2FA failed: ' + e.message);
-    igState = 'disconnected';
-    renderIgSettings();
-  }
-}
-
-async function igLogout() {
-  await api('/api/auth/instagram/logout', { method: 'POST' });
-  igState = 'disconnected';
-  igUser = '';
-  renderIgSettings();
-  loadAll();
+  // IG settings are now static in the HTML — no-op
 }
 
 // ── Helpers ──
@@ -1573,7 +1691,7 @@ async function exportToSheet() {
 }
 
 // ── Init ──
-loadAll();
+initAuth();
 </script>
 </body>
 </html>

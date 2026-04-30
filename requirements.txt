@@ -8,3 +8,5 @@ pytesseract
 Pillow
 gspread
 google-auth
+supabase
+python-dotenv
