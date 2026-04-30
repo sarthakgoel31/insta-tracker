@@ -34,6 +34,8 @@ from db import (
     get_reel_snapshots, get_all_reels_for_analytics, get_snapshots_for_reel,
 )
 from auth import AuthMiddleware, get_user_id, is_anonymous, require_auth, TRIAL_LIMIT
+
+FREE_URL_LIMIT = 20  # Max URLs for free logged-in users
 from scraper import (
     detect_platform,
     fetch_reel_data,
@@ -289,6 +291,11 @@ def add_reel(request: Request, reel: ReelCreate):
         return {"ok": True, "trial_used": len(trial), "trial_limit": TRIAL_LIMIT}
 
     user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    if tier == "free":
+        existing = db_list_reels(user_id)
+        if len(existing) >= FREE_URL_LIMIT:
+            raise HTTPException(403, f"Free plan limit: {FREE_URL_LIMIT} URLs. Book a call to unlock unlimited: {CAL_URL}")
     try:
         insert_reel(user_id, reel.url, reel.title, platform)
     except Exception:
@@ -343,10 +350,15 @@ def add_reels_bulk(request: Request, data: BulkAdd):
                 "trial_used": count, "trial_limit": TRIAL_LIMIT}
 
     user_id = get_user_id(request)
+    tier = get_user_tier(user_id)
+    existing_count = len(db_list_reels(user_id)) if tier == "free" else 0
     added, skipped_list = 0, []
     for url in data.urls:
         url = url.strip()
         if not url:
+            continue
+        if tier == "free" and (existing_count + added) >= FREE_URL_LIMIT:
+            skipped_list.append({"url": url, "reason": f"Free plan limit ({FREE_URL_LIMIT} URLs). Book a call: {CAL_URL}"})
             continue
         platform = detect_platform(url)
         if platform == "unknown":
