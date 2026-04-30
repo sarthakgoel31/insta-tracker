@@ -1216,6 +1216,16 @@ async function refreshViews() {
 
   try {
     const res = await api('/api/refresh', { method: 'POST' });
+
+    // Trial mode: refresh is synchronous, no polling needed
+    if (res.trial_done) {
+      overlay.style.display = 'none';
+      btn.disabled = false;
+      toast(res.message || 'All views updated!');
+      await loadAll();
+      return;
+    }
+
     const total = res.total;
     const est = res.est_seconds;
     text.textContent = `Fetching views (0/${total})...`;

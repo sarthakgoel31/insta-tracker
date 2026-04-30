@@ -701,7 +701,12 @@ def refresh_views(request: Request):
                 reel["likes"] = data.get("likes")
                 reel["comments"] = data.get("comments")
                 reel["last_fetched"] = datetime.now(timezone.utc).isoformat()
-        return {"started": False, "total": len(trial), "message": "Refreshed"}
+                if data.get("title") and not reel.get("title"):
+                    reel["title"] = data["title"]
+                if data.get("account") and not reel.get("account"):
+                    reel["account"] = data["account"]
+        # Return format that frontend understands — no polling needed
+        return {"total": len(trial), "message": "All views updated!", "trial_done": True}
 
     user_id = require_auth(request)
     tier = get_user_tier(user_id)
