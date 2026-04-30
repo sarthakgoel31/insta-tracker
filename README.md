@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.png" alt="Social Branding Tracker Logo" width="120" />
+</p>
+
 # Insta Tracker
 
 **Social media branding tracker with reel view analytics and monthly cohort analysis.**
