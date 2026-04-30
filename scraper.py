@@ -715,22 +715,45 @@ def fetch_youtube(url: str) -> dict:
 
 
 def _fetch_yt_dlp(video_id: str, url: str) -> dict:
-    """Fallback YouTube fetcher using yt-dlp."""
-    try:
-        import yt_dlp
-        ydl_opts = {"quiet": True, "no_warnings": True, "skip_download": True}
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
+    """Fallback YouTube fetcher using Invidious API (no cookies needed)."""
+    import httpx
+
+    # Try multiple Invidious instances
+    instances = [
+        "https://vid.puffyan.us",
+        "https://inv.tux.pizza",
+        "https://invidious.fdn.fr",
+        "https://y.com.sb",
+    ]
+
+    headers = {"User-Agent": "Mozilla/5.0"}
+
+    for instance in instances:
+        try:
+            resp = httpx.get(
+                f"{instance}/api/v1/videos/{video_id}?fields=viewCount,likeCount,title,author,published",
+                headers=headers, timeout=10
+            )
+            if resp.status_code != 200:
+                continue
+            data = resp.json()
+            published = data.get("published", 0)
+            posted_date = None
+            if published:
+                from datetime import datetime, timezone
+                posted_date = datetime.fromtimestamp(published, tz=timezone.utc).strftime("%Y-%m-%d")
             return {
-                "views": info.get("view_count"),
-                "likes": info.get("like_count"),
-                "comments": info.get("comment_count"),
-                "posted_date": info.get("upload_date", "")[:10] if info.get("upload_date") else None,
-                "title": (info.get("title") or "")[:100],
-                "account": info.get("uploader") or info.get("channel") or "",
+                "views": data.get("viewCount"),
+                "likes": data.get("likeCount"),
+                "comments": None,
+                "posted_date": posted_date,
+                "title": (data.get("title") or "")[:100],
+                "account": data.get("author") or "",
             }
-    except Exception as e:
-        return {"error": f"yt-dlp failed: {e}"}
+        except Exception:
+            continue
+
+    return {"error": "YouTube blocked this server. Try again later."}
 
 
 # ── Facebook: Playwright ──────────────────────────────────
