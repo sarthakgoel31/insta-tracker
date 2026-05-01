@@ -1,99 +1,86 @@
-<p align="center">
-  <img src="logo.png" alt="Social Branding Tracker Logo" width="120" />
-</p>
+# Social Branding Tracker
 
-# Insta Tracker
+Multi-tenant SaaS that tracks YouTube, Facebook, and Instagram reel views with monthly cohort analysis. Free trial, no login required.
 
-**Social media branding tracker with reel view analytics and monthly cohort analysis.**
+**Live:** [social-tracker.sarthakgoel.cv](https://social-tracker.sarthakgoel.cv)
 
-![Insta Tracker](docs/insta-tracker-card.png)
+## Why
 
----
+Social media managers manually count reel views in spreadsheets every week. This tool scrapes view counts automatically across 3 platforms, tracks them over time, and generates cohort analysis to measure content performance trends.
 
-## What It Does
+## How
 
-Insta Tracker monitors reel/video performance across Instagram, YouTube, and Facebook for brand accounts. It scrapes view counts, tracks them over time, and generates monthly cohort analysis to measure content performance trends. Built for the myBillBook social branding team to replace manual view-count tracking with automated, persistent analytics.
-
----
-
-## Key Features
-
-- **Multi-Platform Scraping** -- Instagram (GraphQL API + Playwright fallback), YouTube (yt-dlp), Facebook (Playwright headless)
-- **View Count Tracking** -- Periodic snapshots of reel/video views stored in a local database
-- **Monthly Cohort Analysis** -- Group reels by publish month and track cumulative view growth
-- **Instagram Auth** -- Session management with 2FA support, cookie persistence, and login/logout controls
-- **Web Dashboard** -- FastAPI server with static frontend for viewing analytics
-- **Google Sheets Sync** -- Push tracked data to Google Sheets for team access
-- **OCR Fallback** -- Tesseract-based view count extraction when APIs fail
-- **API Endpoints** -- REST API for programmatic access to all tracking data
-- **No-Cache API Middleware** -- Ensures fresh data on every dashboard request
-- **Docker Ready** -- Single-command deployment with Playwright and Tesseract pre-installed
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Language | Python 3.13 |
-| Web Framework | FastAPI + Uvicorn |
-| Instagram | Instaloader + GraphQL API |
-| YouTube | yt-dlp |
-| Facebook | Playwright (headless Chromium) |
-| OCR | Tesseract (pytesseract + Pillow) |
-| Database | SQLite |
-| Sheets Sync | gspread + google-auth |
-| HTTP Client | httpx |
-| Container | Docker (python:3.13-slim) |
-
----
-
-## Getting Started
-
-### Prerequisites
-
-- Python 3.11+ (or Docker)
-- Tesseract OCR installed (`brew install tesseract` on macOS)
-- ffmpeg installed (`brew install ffmpeg` on macOS)
-
-### Installation
-
-```bash
-git clone https://github.com/sarthakgoel31/insta-tracker.git
-cd insta-tracker
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m playwright install chromium --with-deps
+```
+Paste URL → Auto-detect platform → Scrape view count
+         → Track over time → Monthly cohort analysis
 ```
 
-### Run
+1. Paste any YouTube, Facebook, or Instagram URL
+2. Views are fetched automatically (Invidious API for YT, Playwright for FB)
+3. Refresh to update view counts over time
+4. Cohort analysis shows M0/M1/M2 growth by posting month
 
-```bash
-python server.py
-```
+## Tiers
 
-### Docker
+| Tier | URLs | Platforms | Auth |
+|---|---|---|---|
+| Trial | 5 | YouTube + Facebook | None (no login) |
+| Free | 20 | YouTube + Facebook | Email/password |
+| Paid | Unlimited | YouTube + Facebook + Instagram | [Book a call](https://cal.com/sarthakgoel31) |
 
-```bash
-docker build -t insta-tracker .
-docker run -p 8000:8000 insta-tracker
-```
+## Features
 
----
+| Feature | Description |
+|---|---|
+| Multi-Platform | YouTube (Invidious API), Facebook (Playwright), Instagram (GraphQL + cookies) |
+| Trial Mode | 5 URLs without login, instant scraping |
+| Monthly Cohort Analysis | M0/M1/M2 view growth grouped by posting month |
+| Pivot Tables | Group by account, platform, or month |
+| Bulk Add | Paste multiple URLs at once |
+| Google Sheets Export | Push all data to Google Sheets |
+| Daily Auto-Refresh | 8 AM IST cron refreshes all users' reels |
+| Per-User Data | Supabase Auth + RLS, each user sees only their data |
+
+## Tech
+
+| Component | Technology |
+|---|---|
+| Backend | Python 3, FastAPI, Uvicorn |
+| Database | Supabase Postgres (multi-tenant with RLS) |
+| Auth | Supabase Auth (email/password) |
+| YouTube | Invidious API (free, no cookies needed) |
+| Facebook | Playwright headless Chromium |
+| Instagram | GraphQL API + Instaloader (paid tier only) |
+| Hosting | Render free tier |
+| Frontend | Static HTML served by FastAPI |
 
 ## Architecture
 
-The system has two main components: a multi-platform scraper and a FastAPI server. The scraper uses platform-specific strategies -- Instagram's GraphQL API with Playwright as a fallback for checkpoint-blocked sessions, yt-dlp for YouTube, and headless Chromium for Facebook. View count snapshots are stored in SQLite with timestamps for time-series analysis. The FastAPI server serves both the dashboard UI (static files) and REST endpoints, with optional Google Sheets sync for team distribution.
+```
+insta-tracker/
+  server.py              # FastAPI server — all routes + async pipeline
+  auth.py                # JWT middleware for Supabase Auth
+  db.py                  # Supabase Postgres client (replaces SQLite)
+  scraper.py             # Multi-platform scraper (IG/YT/FB)
+  static/index.html      # Dashboard UI (login, trial, tier gating)
+  supabase_schema.sql    # Postgres schema + RLS policies
+```
 
-```
-Scraper (IG GraphQL / Playwright / yt-dlp)
-    --> SQLite (view snapshots with timestamps)
-    --> FastAPI Dashboard + Google Sheets Sync
-```
+## Status
+
+| Item | Status |
+|---|---|
+| Multi-platform scraping | Complete |
+| Supabase Auth + per-user data | Complete |
+| Trial mode (5 URLs, no login) | Complete |
+| Free tier (20 URLs) | Complete |
+| Paid tier (Instagram) | Complete |
+| Monthly cohort analysis | Complete |
+| Google Sheets export | Complete |
+| Daily auto-refresh cron | Complete |
+| Render deployment | Complete |
+| Custom domain | Complete |
 
 ---
 
-<p align="center">
-  <sub>Built with <a href="https://claude.ai/claude-code">Claude Code</a></sub>
-</p>
+Built by [Sarthak Goel](https://sarthakgoel.cv)
