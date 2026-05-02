@@ -1,3 +1,10 @@
+<p align="center">
+  <a href="https://social-tracker.sarthakgoel.cv"><img src="https://img.shields.io/badge/demo-live-brightgreen" alt="Live Demo" /></a>
+  <img src="https://img.shields.io/badge/python-3-3776AB?logo=python&logoColor=white" alt="Python" />
+  <img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI" />
+  <img src="https://img.shields.io/badge/Supabase-3FCF8E?logo=supabase&logoColor=white" alt="Supabase" />
+</p>
+
 # Social Branding Tracker
 
 Multi-tenant SaaS that tracks YouTube, Facebook, and Instagram reel views with monthly cohort analysis. Free trial, no login required.
