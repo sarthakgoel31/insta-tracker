@@ -435,8 +435,9 @@ https://www.facebook.com/reel/123456"></textarea>
 
 <script>
 // ── Supabase Auth ──
-const SUPABASE_URL = 'https://REDACTED';
-const SUPABASE_ANON_KEY = 'REDACTED';
+// Set these values in your deployment configuration
+const SUPABASE_URL = '';
+const SUPABASE_ANON_KEY = '';
 let sb = null;
 try {
   sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);

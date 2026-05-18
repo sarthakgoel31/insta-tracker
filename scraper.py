@@ -35,7 +35,7 @@ _ig_checkpointed: bool = False  # Set when v1 API returns checkpoint_required
 # Instagram GraphQL — doc_id rotates every few weeks, update when needed
 IG_GRAPHQL_URL = "https://www.instagram.com/api/graphql"
 IG_DOC_ID = "10015901848480474"
-IG_APP_ID = "REDACTED"
+IG_APP_ID = os.environ.get("IG_APP_ID", "")
 
 
 # ── Utility ────────────────────────────────────────────────

@@ -7,8 +7,8 @@ import json
 from fastapi import Request, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://REDACTED")
-SUPABASE_ANON_KEY = os.environ.get("SUPABASE_ANON_KEY", "REDACTED")
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_ANON_KEY = os.environ["SUPABASE_ANON_KEY"]
 
 TRIAL_LIMIT = 5  # Max URLs for anonymous users
 
